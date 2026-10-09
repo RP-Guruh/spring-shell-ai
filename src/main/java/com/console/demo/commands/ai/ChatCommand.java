@@ -4,10 +4,12 @@ import com.console.demo.design.ColorsDesign;
 import com.console.demo.dto.ChatChunk;
 import com.console.demo.dto.ChatMessage;
 import com.console.demo.dto.ChatRequest;
+import com.console.demo.services.ConversationService;
+
 import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.UserInterruptException;
-import org.springframework.core.convert.ConversionService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.shell.core.command.annotation.Command;
 import org.springframework.shell.core.command.annotation.Option;
@@ -28,11 +30,14 @@ public class ChatCommand {
     private static final long CHAR_DELAY_MS = 12;
     private final RestClient restClient;
     private final LineReader lineReader;
+    private final String defaultModel;
+    private final ConversationService conversationService;
 
-    public ChatCommand(RestClient restClient, LineReader lineReader) {
+    public ChatCommand(@Value("${spring.ai.openai.chat.model}") String defaultModel, RestClient restClient, LineReader lineReader, ConversationService conversationService) {
+        this.defaultModel = defaultModel;
         this.restClient = restClient;
         this.lineReader = lineReader;
-
+        this.conversationService = conversationService;
     }
 
     @Command(
@@ -43,8 +48,9 @@ public class ChatCommand {
             alias = {"cht"}
     )
     public String chat(@Option(shortName = 'm', longName = "model",
-            defaultValue = "mikir",
             description = "Model yang dipakai") String model) {
+
+        model = (model == null || model.isBlank()) ? defaultModel : model;
 
         List<ChatMessage> history = new ArrayList<>();
         System.out.println(ColorsDesign.gold("Mode chat (" + model + "). Ketik /exit untuk keluar, /clear untuk reset."));
@@ -66,6 +72,7 @@ public class ChatCommand {
             }
 
             history.add(new ChatMessage("user", input));
+            // conversationService.add("ini simpan chat");
             try {
                 String reply = streamReply(model, history);
                 if (reply.isEmpty()) {
@@ -112,7 +119,7 @@ public class ChatCommand {
 
     private String streamReply(String model, List<ChatMessage> history) {
         StringBuilder full = new StringBuilder();
-        System.out.print(ColorsDesign.gold("ai  ❯ "));
+        System.out.print(ColorsDesign.gold("AI  ❯ "));
         System.out.flush();
 
         restClient.post()
