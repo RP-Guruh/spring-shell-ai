@@ -1,14 +1,16 @@
 spring.application.name=demo
-spring.ai.openai.api-key=sk-4e904f84b51f9768-bkdhlm-2bcf0df3
-spring.ai.openai.base-url=http://localhost:20128
-spring.ai.openai.chat.model=dian_sipemikir
 
-# Postgres
+# AI Provider / OpenAI-compatible API
+spring.ai.openai.api-key=your-api-key-here
+spring.ai.openai.base-url=http://localhost:20128
+spring.ai.openai.chat.model=YOUR_COMBO
+
+# Database Configuration (PostgreSQL)
 spring.jpa.hibernate.ddl-auto=update
 spring.jpa.show-sql=true
 spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
 
-spring.datasource.url=jdbc:postgresql://localhost:5432/ai_learning
+spring.datasource.url=jdbc:postgresql://localhost:5432/YOUR_DB
 spring.datasource.username=postgres
-spring.datasource.password=fadilaguruh2022-
+spring.datasource.password=your_password_here
 spring.datasource.driver-class-name=org.postgresql.Driver
