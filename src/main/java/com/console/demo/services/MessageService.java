@@ -5,7 +5,9 @@ import com.console.demo.entities.MessageEntity;
 import com.console.demo.repositories.ConversationRepository;
 import com.console.demo.repositories.MessageRepository;
 import org.springframework.stereotype.Service;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Collections;
 
 @Service
 public class MessageService {
@@ -31,7 +33,10 @@ public class MessageService {
         return messageRepository.save(c);
     }
 
-    public List<MessageDto> getAll() {
-        return messageRepository.findAllBy();
+
+    public List<MessageDto> getRecent() {
+        List<MessageDto> recent = new ArrayList<>(messageRepository.findTop5ByOrderByIdDesc());
+        Collections.reverse(recent);
+        return recent;
     }
 }

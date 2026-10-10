@@ -4,8 +4,7 @@ import com.console.demo.design.ColorsDesign;
 import com.console.demo.dto.ChatChunk;
 import com.console.demo.dto.ChatMessage;
 import com.console.demo.dto.ChatRequest;
-import com.console.demo.services.ConversationService;
-import com.console.demo.services.MessageService;
+import com.console.demo.services.*;
 
 import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
@@ -17,7 +16,6 @@ import org.springframework.shell.core.command.annotation.Option;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import tools.jackson.databind.json.JsonMapper;
-import java.util.stream.Collectors;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -32,17 +30,23 @@ public class ChatCommand {
     private final RestClient restClient;
     private final LineReader lineReader;
     private final String defaultModel;
+
     private final ConversationService conversationService;
     private final MessageService messageService;
+    private final SummaryService summaryService;
+    private final SummarizerService summarizerService;
+
     private Boolean saveFirstChat = true;
     private Long idConversation;
 
-    public ChatCommand(@Value("${spring.ai.openai.chat.model}") String defaultModel, RestClient restClient, LineReader lineReader, ConversationService conversationService, MessageService messageService) {
+    public ChatCommand(@Value("${spring.ai.openai.chat.model}") String defaultModel, RestClient restClient, LineReader lineReader, ConversationService conversationService, MessageService messageService, SummaryService summaryService, SummarizerService summarizerService) {
         this.defaultModel = defaultModel;
         this.restClient = restClient;
         this.lineReader = lineReader;
         this.conversationService = conversationService;
         this.messageService = messageService;
+        this.summaryService = summaryService;
+        this.summarizerService = summarizerService;
     }
 
     @Command(
@@ -57,14 +61,19 @@ public class ChatCommand {
 
         model = (model == null || model.isBlank()) ? defaultModel : model;
 
-        // ambil semua history dari postgres
-        List<ChatMessage> history = messageService.getAll().stream()
+        // ringkasan terbaru + 5 pesan terakhir
+        List<ChatMessage> history = new ArrayList<>();
+        summaryService.getLatest().ifPresent(s ->
+                history.add(new ChatMessage("system",
+                        "Konteks percakapan sebelumnya (ringkasan):\n" + s.getContent())));
+        messageService.getRecent().stream()
                 .map(m -> new ChatMessage(m.role(), m.content()))
-                .collect(Collectors.toCollection(ArrayList::new));
+                .forEach(history::add);
 
         System.out.println(ColorsDesign.gold("Mode chat (" + model + "). Ketik /exit untuk keluar, /clear untuk reset."));
 
         while (true) {
+            System.out.println(divider());
             String input;
             try {
                 input = lineReader.readLine(ColorsDesign.gold("you ❯ "));
@@ -79,16 +88,14 @@ public class ChatCommand {
                 System.out.println(ColorsDesign.gold("Riwayat dihapus."));
                 continue;
             }
-
-            history.add(new ChatMessage("user", input));
-
+            System.out.println(divider());
             // simpan chat pertama kali
-            while(saveFirstChat){
-                idConversation = conversationService.add(input).getId();
+            if (saveFirstChat) {
+                String title = input.length() > 50 ? input.substring(0, 50) : input;
+                idConversation = conversationService.add(title).getId();
                 saveFirstChat = false;
             }
-            // menyimpan pesan dari user
-            messageService.add(idConversation, "user", input);
+            history.add(new ChatMessage("user", input));
 
             try {
                 String reply = streamReply(model, history);
@@ -97,8 +104,10 @@ public class ChatCommand {
                     System.out.println(ColorsDesign.red("✘ Respons kosong dari server"));
                 } else {
                     history.add(new ChatMessage("assistant", reply));
-                    // balasan dari ai kita simpan juga
+                    // pesan user dan balasan AI disimpan setelah berhasil
+                    messageService.add(idConversation, "user", input);
                     messageService.add(idConversation, "assistant", reply);
+                    summarizerService.summarizeIfNeeded();
                 }
             } catch (Exception e) {
                 history.remove(history.size() - 1);
@@ -175,5 +184,11 @@ public class ChatCommand {
 
         System.out.println();
         return full.toString();
+    }
+
+    private String divider() {
+        int width = lineReader.getTerminal().getWidth();
+        if (width <= 0) width = 60;
+        return ColorsDesign.gold("─".repeat(Math.min(width, 80)));
     }
 }

@@ -34,3 +34,4 @@ build/
 
 # Application Properties (Secrets & Local Config)
 src/main/resources/application.properties
+*.log

@@ -9,6 +9,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.shell.core.ShellRunner;
 import org.springframework.shell.core.command.annotation.EnableCommand;
 
@@ -16,6 +17,7 @@ import java.time.LocalDate;
 
 @SpringBootApplication
 @EnableCommand({ListModelsCommand.class, StatusRunningCommand.class, ChatCommand.class})
+@EnableAsync
 public class DemoApplication {
 
 	public static void main(String[] args) throws Exception {
