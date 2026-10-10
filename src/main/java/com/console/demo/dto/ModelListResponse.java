@@ -2,7 +2,6 @@ package com.console.demo.dto;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.sun.jdi.connect.spi.TransportService;
 
 import java.util.List;
 

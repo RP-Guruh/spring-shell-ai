@@ -20,12 +20,12 @@ public class DemoApplication {
 
 	public static void main(String[] args) throws Exception {
 		SpringApplication app = new SpringApplication(DemoApplication.class);
-		app.setWebApplicationType(WebApplicationType.NONE); // aplikasi console, bukan web
-		app.setBannerMode(Banner.Mode.OFF);                 // matikan banner Spring, pakai banner sendiri
+		app.setWebApplicationType(WebApplicationType.NONE);
+		app.setBannerMode(Banner.Mode.OFF);
 
 		ConfigurableApplicationContext context = app.run(args);
 
-		if (args.length == 0) {   // hanya saat mode interaktif
+		if (args.length == 0) {
 			BannerDesign.print("9ROUTER CHAT v0.0.1 @PinkKey",
 					"Router : " + context.getEnvironment().getProperty("spring.ai.openai.base-url"),
 					"Date :" + LocalDate.now(),

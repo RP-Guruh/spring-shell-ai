@@ -1,7 +1,6 @@
 package com.console.demo.commands.ai;
 
 import com.console.demo.design.ColorsDesign;
-import com.console.demo.dto.ModelListResponse;
 import org.springframework.shell.core.command.annotation.Command;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;

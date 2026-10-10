@@ -7,7 +7,7 @@ spring.ai.openai.chat.model=YOUR_COMBO
 
 # Database Configuration (PostgreSQL)
 spring.jpa.hibernate.ddl-auto=update
-spring.jpa.show-sql=true
+spring.jpa.show-sql=true # ganti ke false agar return sql nya tidak terlihat
 spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
 
 spring.datasource.url=jdbc:postgresql://localhost:5432/YOUR_DB

@@ -5,6 +5,7 @@ import com.console.demo.dto.ChatChunk;
 import com.console.demo.dto.ChatMessage;
 import com.console.demo.dto.ChatRequest;
 import com.console.demo.services.ConversationService;
+import com.console.demo.services.MessageService;
 
 import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
@@ -16,7 +17,7 @@ import org.springframework.shell.core.command.annotation.Option;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import tools.jackson.databind.json.JsonMapper;
-
+import java.util.stream.Collectors;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -32,12 +33,16 @@ public class ChatCommand {
     private final LineReader lineReader;
     private final String defaultModel;
     private final ConversationService conversationService;
+    private final MessageService messageService;
+    private Boolean saveFirstChat = true;
+    private Long idConversation;
 
-    public ChatCommand(@Value("${spring.ai.openai.chat.model}") String defaultModel, RestClient restClient, LineReader lineReader, ConversationService conversationService) {
+    public ChatCommand(@Value("${spring.ai.openai.chat.model}") String defaultModel, RestClient restClient, LineReader lineReader, ConversationService conversationService, MessageService messageService) {
         this.defaultModel = defaultModel;
         this.restClient = restClient;
         this.lineReader = lineReader;
         this.conversationService = conversationService;
+        this.messageService = messageService;
     }
 
     @Command(
@@ -52,7 +57,11 @@ public class ChatCommand {
 
         model = (model == null || model.isBlank()) ? defaultModel : model;
 
-        List<ChatMessage> history = new ArrayList<>();
+        // ambil semua history dari postgres
+        List<ChatMessage> history = messageService.getAll().stream()
+                .map(m -> new ChatMessage(m.role(), m.content()))
+                .collect(Collectors.toCollection(ArrayList::new));
+
         System.out.println(ColorsDesign.gold("Mode chat (" + model + "). Ketik /exit untuk keluar, /clear untuk reset."));
 
         while (true) {
@@ -72,7 +81,15 @@ public class ChatCommand {
             }
 
             history.add(new ChatMessage("user", input));
-            // conversationService.add("ini simpan chat");
+
+            // simpan chat pertama kali
+            while(saveFirstChat){
+                idConversation = conversationService.add(input).getId();
+                saveFirstChat = false;
+            }
+            // menyimpan pesan dari user
+            messageService.add(idConversation, "user", input);
+
             try {
                 String reply = streamReply(model, history);
                 if (reply.isEmpty()) {
@@ -80,6 +97,8 @@ public class ChatCommand {
                     System.out.println(ColorsDesign.red("✘ Respons kosong dari server"));
                 } else {
                     history.add(new ChatMessage("assistant", reply));
+                    // balasan dari ai kita simpan juga
+                    messageService.add(idConversation, "assistant", reply);
                 }
             } catch (Exception e) {
                 history.remove(history.size() - 1);
