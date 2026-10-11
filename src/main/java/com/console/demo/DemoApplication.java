@@ -3,6 +3,7 @@ package com.console.demo;
 import com.console.demo.commands.ai.ChatCommand;
 import com.console.demo.commands.ai.ListModelsCommand;
 import com.console.demo.commands.ai.StatusRunningCommand;
+import com.console.demo.commands.ai.SettingCommand;
 import com.console.demo.design.BannerDesign;
 import org.springframework.boot.Banner;
 import org.springframework.boot.SpringApplication;
@@ -16,7 +17,7 @@ import org.springframework.shell.core.command.annotation.EnableCommand;
 import java.time.LocalDate;
 
 @SpringBootApplication
-@EnableCommand({ListModelsCommand.class, StatusRunningCommand.class, ChatCommand.class})
+@EnableCommand({ListModelsCommand.class, StatusRunningCommand.class, ChatCommand.class, SettingCommand.class})
 @EnableAsync
 public class DemoApplication {
 
