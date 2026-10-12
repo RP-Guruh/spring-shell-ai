@@ -1,6 +1,7 @@
 package com.console.demo.commands.ai;
 
 import com.console.demo.design.ColorsDesign;
+import com.console.demo.design.ThinkingSpinner;
 import com.console.demo.dto.ChatChunk;
 import com.console.demo.dto.ChatMessage;
 import com.console.demo.dto.ChatRequest;
@@ -99,12 +100,12 @@ public class ChatCommand {
 
             try {
                 String reply = streamReply(model, history);
-                if (reply.isEmpty()) {
+
+                if (reply == null || reply.isEmpty()) {
                     history.remove(history.size() - 1);
-                    System.out.println(ColorsDesign.red("✘ Respons kosong dari server"));
+                    System.out.println(ColorsDesign.red("Respons kosong dari server"));
                 } else {
                     history.add(new ChatMessage("assistant", reply));
-                    // pesan user dan balasan AI disimpan setelah berhasil
                     messageService.add(idConversation, "user", input);
                     messageService.add(idConversation, "assistant", reply);
                     summarizerService.summarizeIfNeeded();
@@ -147,45 +148,58 @@ public class ChatCommand {
 
     private String streamReply(String model, List<ChatMessage> history) {
         StringBuilder full = new StringBuilder();
-        System.out.print(ColorsDesign.gold("AI  ❯ "));
-        System.out.flush();
+        ThinkingSpinner spinner =
+                new ThinkingSpinner(lineReader.getTerminal(), "AI Sedang Berpikir").start();
+        boolean[] first = {true};
 
-        restClient.post()
-                .uri("/v1/chat/completions")
-                .accept(MediaType.TEXT_EVENT_STREAM)
-                .body(new ChatRequest(model, history, true))
-                .exchange((request, response) -> {
-                    if (response.getStatusCode().isError()) {
-                        throw new IllegalStateException(
-                                "Server membalas error " + response.getStatusCode().value());
-                    }
-                    try (BufferedReader reader = new BufferedReader(
-                            new InputStreamReader(response.getBody(), StandardCharsets.UTF_8))) {
-                        String line;
-                        while ((line = reader.readLine()) != null) {
-                            if (!line.startsWith("data:")) continue;
-
-                            String json = line.substring(5).trim();
-                            if (json.isEmpty()) continue;
-                            if (json.equals("[DONE]")) break;
-
-                            ChatChunk chunk = MAPPER.readValue(json, ChatChunk.class);
-                            if (chunk.choices() == null || chunk.choices().isEmpty()) continue;
-
-                            ChatChunk.Delta delta = chunk.choices().get(0).delta();
-                            if (delta == null || delta.content() == null) continue;
-
-                            typewrite(delta.content());
-                            full.append(delta.content());
+        try {
+            restClient.post()
+                    .uri("/v1/chat/completions")
+                    .accept(MediaType.TEXT_EVENT_STREAM)
+                    .body(new ChatRequest(model, history, true))
+                    .exchange((request, response) -> {
+                        if (response.getStatusCode().isError()) {
+                            throw new IllegalStateException(
+                                    "Server membalas error " + response.getStatusCode().value());
                         }
-                    }
-                    return null;
-                });
+                        try (BufferedReader reader = new BufferedReader(
+                                new InputStreamReader(response.getBody(), StandardCharsets.UTF_8))) {
+                            String line;
+                            while ((line = reader.readLine()) != null) {
+                                if (!line.startsWith("data:")) continue;
 
-        System.out.println();
+                                String json = line.substring(5).trim();
+                                if (json.isEmpty()) continue;
+                                if (json.equals("[DONE]")) break;
+
+                                ChatChunk chunk = MAPPER.readValue(json, ChatChunk.class);
+                                if (chunk.choices() == null || chunk.choices().isEmpty()) continue;
+
+                                ChatChunk.Delta delta = chunk.choices().get(0).delta();
+                                if (delta == null || delta.content() == null) continue;
+
+                                if (first[0]) {
+                                    first[0] = false;
+                                    spinner.stop();
+                                    System.out.print(ColorsDesign.gold("AI  ❯ "));
+                                    System.out.flush();
+                                }
+
+                                typewrite(delta.content());
+                                full.append(delta.content());
+                            }
+                        }
+                        return null;
+                    });
+        } finally {
+            spinner.stop();
+        }
+
+        if (!first[0]) {
+            System.out.println();
+        }
         return full.toString();
     }
-
     private String divider() {
         int width = lineReader.getTerminal().getWidth();
         if (width <= 0) width = 60;
