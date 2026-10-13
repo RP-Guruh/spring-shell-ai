@@ -1,29 +1,36 @@
 # 9Router CLI (Spring Shell AI)
 
-CLI interaktif berbasis Spring Shell untuk chatting dengan OpenAI-compatible API (9Router / local LLM) langsung dari terminal. Dilengkapi fitur streaming output dan pencatatan history percakapan ke PostgreSQL.
+Aplikasi CLI interaktif berbasis Spring Shell untuk ngobrol langsung dengan model AI (OpenAI API-compatible / 9Router / LLM lokal) lewat terminal. Mendukung streaming response secara realtime, pelacakan token, auto-summarize obrolan agar hemat context window, dan penyimpanan riwayat percakapan ke PostgreSQL.
 
-## Fitur
+## Fitur Utama
 
-- Chat interaktif langsung di terminal dengan typewriter effect
-- Streaming response (SSE)
-- Pilihan model dinamis lewat parameter `-m` atau default config
-- Cek ketersediaan model (`models`) dan status server (`status`)
-- Simpan riwayat percakapan ke database PostgreSQL
+- Chat interaktif langsung di terminal dengan efek ketik (typewriter effect)
+- Streaming output realtime (SSE) dengan thinking spinner
+- Ganti model fleksibel lewat opsi `-m <model>`
+- Cek ketersediaan model (`models`) dan tes koneksi router (`status`)
+- Pengaturan default model & URL via command (`setting`)
+- Estimasi token per pesan dan pelacakan pemakaian token dari server
+- Auto-summarize otomatis saat context membesar untuk menghemat token
+- Penyimpanan riwayat sesi, pesan, dan ringkasan percakapan di PostgreSQL
+
+---
 
 ## Kebutuhan Sistem
 
-- Java 17+
+- Java 17+ (disarankan Java 21)
 - PostgreSQL
-- Server AI yang kompatibel dengan OpenAI API (misal: 9Router / vLLM / Ollama)
+- Server AI kompatibel OpenAI API (misal: 9Router, vLLM, Ollama, atau OpenAI)
+
+---
 
 ## Setup & Konfigurasi
 
-1. Salin file template config:
+1. Salin template konfigurasi:
    ```bash
    cp src/main/resources/application.properties.example src/main/resources/application.properties
    ```
 
-2. Sesuaikan isi `src/main/resources/application.properties`:
+2. Atur kredensial dan database di `src/main/resources/application.properties`:
    ```properties
    # Konfigurasi AI Server
    spring.ai.openai.api-key=YOUR_API_KEY
@@ -36,46 +43,87 @@ CLI interaktif berbasis Spring Shell untuk chatting dengan OpenAI-compatible API
    spring.datasource.password=YOUR_PASSWORD
    ```
 
+---
+
 ## Menjalankan Aplikasi
 
-Jalankan langsung dengan Maven Wrapper:
+Jalankan langsung memakai Maven Wrapper:
 
 ```bash
 ./mvnw spring-boot:run
 ```
 
-Atau build ke JAR terlebih dahulu:
+Atau compile ke bentuk file JAR:
 
 ```bash
 ./mvnw clean package -DskipTests
 java -jar target/demo-0.0.1-SNAPSHOT.jar
 ```
 
-## Penggunaan Command
+---
+
+## Daftar Command
 
 | Command | Alias | Keterangan |
 | :--- | :--- | :--- |
-| `chat` | `cht` | Masuk mode chat interaktif (menggunakan default model) |
-| `chat -m <model>` | `cht -m <model>` | Chat menggunakan model spesifik |
-| `models` | `mdl` | Menampilkan daftar model yang tersedia di server |
-| `status` | `sts` | Mengecek status koneksi ke router |
-| `help` | | Melihat semua command yang tersedia |
+| `chat` | `cht` | Masuk ke mode chat interaktif (pakai default model) |
+| `chat -m <model>` | `cht -m <model>` | Chat interaktif dengan model tertentu |
+| `models` | `mdl` | Lihat daftar model yang tersedia di server |
+| `status` | `sts` | Cek status koneksi ke 9Router / AI server |
+| `setting` | `st` | Tampilkan atau ubah konfigurasi aktif router |
+| `help` | | Menampilkan daftar seluruh perintah |
 | `exit` | | Keluar dari aplikasi |
 
-Saat berada di dalam mode **chat**:
-- Ketik `/clear` untuk mereset riwayat chat sesi saat ini.
-- Ketik `/exit` untuk kembali ke menu shell utama.
+Khusus saat berada di dalam mode **chat**:
+- Ketik `/clear` untuk mereset riwayat percakapan sesi saat ini.
+- Ketik `/exit` untuk kembali ke shell utama.
 
-## Arsitektur & Relasi Database
+---
 
-Aplikasi menggunakan PostgreSQL untuk menyimpan riwayat sesi, log pesan, dan memory compression (ringkasan percakapan).
+## Struktur Database
 
-### Skema & Relasi Entitas (ERD)
+Penyimpanan data dibagi ke dalam 3 tabel utama: sesi (`conversation`), pesan (`message`), dan ringkasan berkala (`summaries`).
+
+### Diagram Relasi Tabel
+
+```text
+  ┌───────────────────────┐
+  │     conversation      │
+  │───────────────────────│
+  │ id (PK)               │
+  │ title                 │
+  │ created_at            │
+  └───────────┬───────────┘
+              │ 1
+              │
+              ├───< N ┌───────────────────────┐
+              │       │        message        │
+              │       │───────────────────────│
+              │       │ id (PK)               │
+              │       │ conversation_id (FK)  │
+              │       │ role                  │
+              │       │ content               │
+              │       │ total_token           │
+              │       │ is_summarized         │
+              │       │ created_at            │
+              │       └───────────────────────┘
+              │
+              └───< N ┌───────────────────────┐
+                      │       summaries       │
+                      │───────────────────────│
+                      │ id (PK)               │
+                      │ conversation_id (FK)  │
+                      │ last_message_id       │
+                      │ content               │
+                      │ count_message         │
+                      │ created_at            │
+                      └───────────────────────┘
+```
 
 ```mermaid
 erDiagram
-    conversation ||--o{ message : "1 : N (has many)"
-    conversation ||--o{ summaries : "1 : N (has many)"
+    conversation ||--o{ message : "1 : N"
+    conversation ||--o{ summaries : "1 : N"
 
     conversation {
         bigint id PK
@@ -103,89 +151,129 @@ erDiagram
     }
 ```
 
-### Detail Tabel & Relasi
+### Rincian Tabel
 
-1. **`conversation` (`ConversationEntity`)**
-   - Menyimpan sesi percakapan utama.
-   - Kolom:
-     - `id` (PK, BigInt Auto Increment)
-     - `title` (Varchar, judul percakapan diambil dari input pertama user max 50 karakter)
-     - `created_at` (Timestamp, waktu dibuat)
-   - **Relasi**:
-     - `1 : N` ke tabel `message` (Satu percakapan memiliki banyak pesan).
-     - `1 : N` ke tabel `summaries` (Satu percakapan dapat memiliki riwayat ringkasan bertahap).
+#### 1. Tabel `conversation` (`ConversationEntity`)
+Menyimpan sesi percakapan.
 
-2. **`message` (`MessageEntity`)**
-   - Menyimpan setiap interaksi chat (user maupun assistant).
-   - Kolom:
-     - `id` (PK, BigInt Auto Increment)
-     - `conversation_id` (FK ke `conversation.id`, `ManyToOne`, Not Null)
-     - `role` (Varchar: `"user"` atau `"assistant"`)
-     - `content` (Text, isi pesan)
-     - `total_token` (Integer, estimasi token dihitung dari perkiraan `ceil(karakter / 3.5)`)
-     - `is_summarized` (Boolean, penanda apakah pesan sudah diproses ke dalam ringkasan)
-     - `created_at` (Timestamp, waktu dibuat)
+| Kolom | Tipe Data | Constraint | Keterangan |
+| :--- | :--- | :--- | :--- |
+| `id` | `BIGINT` | PRIMARY KEY, AUTO_INCREMENT | ID unik percakapan |
+| `title` | `VARCHAR(50)` | NOT NULL | Judul obrolan (diambil dari chat pertama user) |
+| `created_at` | `TIMESTAMP` | NOT NULL | Waktu sesi dibuat |
 
-3. **`summaries` (`SummaryEntity`)**
-   - Menyimpan hasil kompresi/ringkasan memori dari pesan-pesan lama.
-   - Kolom:
-     - `id` (PK, BigInt Auto Increment)
-     - `conversation_id` (FK ke `conversation.id`, `ManyToOne`, Not Null)
-     - `last_message_id` (BigInt, ID pesan terakhir yang tercakup dalam batch ringkasan ini)
-     - `content` (Text, isi ringkasan terakumulasi)
-     - `count_message` (Integer, jumlah pesan yang diringkas pada batch tersebut)
-     - `created_at` (Timestamp, waktu dibuat)
+#### 2. Tabel `message` (`MessageEntity`)
+Menyimpan setiap pesan dari user dan asisten AI.
 
----
+| Kolom | Tipe Data | Constraint | Keterangan |
+| :--- | :--- | :--- | :--- |
+| `id` | `BIGINT` | PRIMARY KEY, AUTO_INCREMENT | ID unik pesan |
+| `conversation_id` | `BIGINT` | FOREIGN KEY, NOT NULL | Relasi ke `conversation(id)` |
+| `role` | `VARCHAR(20)` | NOT NULL | Peran pengirim: `"user"` atau `"assistant"` |
+| `content` | `TEXT` | NOT NULL | Teks isi pesan |
+| `total_token` | `INTEGER` | NULLABLE | Estimasi token pesan (`ceil(karakter / 3.5)`) |
+| `is_summarized` | `BOOLEAN` | DEFAULT FALSE | `true` jika pesan ini sudah masuk ringkasan |
+| `created_at` | `TIMESTAMP` | NOT NULL | Waktu pesan dikirim/diterima |
 
-## Logika & Alur Sistem
+#### 3. Tabel `summaries` (`SummaryEntity`)
+Menyimpan ringkasan akumulatif dari pesan-pesan lama yang sudah dipadatkan.
 
-### 1. Alur Mode Chat (`ChatCommand`)
-- **Inisialisasi Riwayat (History)**:
-  Saat command `chat` dijalankan, context memory dibentuk dari:
-  1. Ringkasan terbaru (`summaries`) jika ada, dimasukkan sebagai `SystemMessage`:
-     `"Konteks percakapan sebelumnya (ringkasan): ..."`
-  2. Seluruh pesan yang belum diringkas (`is_summarized = false`) dari database (`messageService.getRecent()`) agar alur dialog aktif tetap lengkap.
-- **Penyimpanan Sesi & Pesan**:
-  - Pada pesan pertama (`saveFirstChat`), entitas `conversation` dibuat dengan `title` dari input pertama (maksimal 50 karakter).
-  - Pesan `user` dan `assistant` masing-masing dihitung estimasi tokennya (`estimate(text) = ceil(length / 3.5)`).
-  - Kedua pesan disimpan ke tabel `message` lengkap dengan kolom `total_token`.
-- **Streaming & Ekstraksi Token Usage**:
-  - Interaksi ke AI menggunakan Spring AI `ChatClient` secara streaming dengan tampilan `ThinkingSpinner` dan efek ketik (typewriter).
-  - Mengambil metadata token asli (`Usage`) dari response stream server (`promptTokens`, `completionTokens`, `totalTokens`).
-  - Menampilkan ringkasan token di terminal: `[token] pertanyaan~X | jawaban~Y`.
-- **Pemicu Pemadatan / Ringkasan (`compactIfNeeded`)**:
-  - **Threshold**: Batas pemicu ringkasan adalah `PROMPT_LIMIT = 6000` token. Angka ini telah memperhitungkan baseline konteks gateway/system prompt router (~2.000–2.700 token).
-  - **Pemicu Utama**: Jika `prompt_tokens` riil dari server melebihi 6.000 token (`promptTokens > PROMPT_LIMIT`).
-  - **Pemicu Cadangan**: Jika usage server kosong, menggunakan estimasi token teks lokal: `estimateHistory(history) + GATEWAY_BASE (2500) > PROMPT_LIMIT`.
-  - Jika ambang batas terlampaui, pemadatan dipicu via `summarizerService.summarize(KEEP_LAST)`.
-  - Setelah ringkasan baru berhasil dibuat dan disimpan, context in-memory dibersihkan dan dimuat ulang (`loadHistory()`) dengan ringkasan terkini dan sisa pesan aktif.
-
-### 2. Alur & Logika Ringkasan (`SummarizerService`)
-Untuk menjaga ukuran prompt tetap hemat token tanpa kehilangan memori esensial:
-- **Penyisihan Pesan Terakhir (`KEEP_LAST = 6`)**:
-  Menyisakan minimal 6 pesan aktif terakhir agar obrolan paling mutakhir tidak langsung diringkas dan percakapan tetap berjalan mulus.
-- **Penyelarasan Batas Giliran (Role Alignment)**:
-  Titik potong pesan lama yang akan diringkas (`foldCount`) disesuaikan mundur jika perlu agar batasnya berhenti tepat sebelum giliran pesan `user`, mencegah pasangan tanya-jawab terbelah di tengah jalan.
-- **Concurrency Guard**:
-  Menggunakan `AtomicBoolean` (`running`) untuk memastikan hanya satu proses peringkasan yang berjalan dalam satu waktu.
-- **Akumulasi Konteks**:
-  Mengambil ringkasan terakhir (`oldSummary`) jika ada, digabungkan dengan kumpulan pesan lama yang akan dipadatkan, lalu dikirim ke AI summarizer (`summaryGenerate.generate()`).
-- **Pembaruan Transaksional**:
-  - Menyimpan akumulasi ringkasan baru ke tabel `summaries`.
-  - Menandai kumpulan pesan lama tersebut dengan status `is_summarized = true`.
+| Kolom | Tipe Data | Constraint | Keterangan |
+| :--- | :--- | :--- | :--- |
+| `id` | `BIGINT` | PRIMARY KEY, AUTO_INCREMENT | ID unik ringkasan |
+| `conversation_id` | `BIGINT` | FOREIGN KEY, NOT NULL | Relasi ke `conversation(id)` |
+| `last_message_id` | `BIGINT` | NULLABLE | ID pesan terakhir yang dicakup ringkasan ini |
+| `content` | `TEXT` | NOT NULL | Teks poin-poin ringkasan dari AI |
+| `count_message` | `INTEGER` | NOT NULL | Jumlah pesan yang dipadatkan di batch ini |
+| `created_at` | `TIMESTAMP` | NOT NULL | Waktu ringkasan dibuat |
 
 ---
 
-## Aturan Ringkasan (Summary Rules)
+## Alur Chat & Manajemen Token
 
-Pembuatan ringkasan dijalankan oleh modul `SummaryGenerate` dengan panduan sistem (system prompt) ketat:
+Berikut alur kerja saat chat berlangsung, mulai dari perhitungan token sampai peringkasan otomatis.
 
-- **Fokus Esensial**: Hanya mencatat fakta tentang user, preferensi, keputusan penting, tugas aktif, angka/nama/istilah kunci, dan pertanyaan yang belum terjawab.
-- **Eliminasi Noise**: Basa-basi, sapaan pembuka/penutup, dan topik yang sudah selesai dieliminasi.
-- **Format Padat**: Ditulis dalam format poin-poin ringkas, bukan kalimat utuh yang menyalin perkataan asli.
-- **Resolusi Konflik**: Apabila ada informasi baru yang bertentangan dengan informasi pada ringkasan lama, gunakan informasi yang paling baru.
-- **Penanganan Kode**: Tidak menyalin potongan kode; hanya mencatat tujuan kode serta nama file/fungsi yang relevan.
-- **Batasan Panjang**: Maksimal **250 kata**; prioritaskan membuang rincian sekunder jika melebihi batas.
-- **Bahasa**: Mengikuti bahasa percakapan yang digunakan.
-- **Output Bersih**: Mengembalikan langsung isi ringkasan tanpa teks pengantar atau penutup.
+### Diagram Alur Kerja
+
+```text
+[Input User Masuk]
+        │
+        ▼
+[1. Buat Sesi & Simpan Pesan User]
+    • Simpan ke DB tabel message
+    • Hitung estimasi token: ceil(panjang teks / 3.5)
+        │
+        ▼
+[2. Kirim ke AI via ChatClient (Streaming)]
+    • Prompt = SystemMessage (ringkasan lama) + pesan aktif belum diringkas
+    • Tampilkan spinner dan efek ketik di terminal
+        │
+        ▼
+[3. Simpan Jawaban AI & Catat Token]
+    • Ambil teks balasan dan simpan ke DB tabel message
+    • Tangkap metadata Usage riil dari stream server (promptTokens & totalTokens)
+    • Tampilkan info token di terminal: [token] pertanyaan~X | jawaban~Y
+        │
+        ▼
+[4. Cek Ambang Batas Token (compactIfNeeded)]
+        │
+        ├── Apakah prompt_tokens > 6.000? (atau estimasi riwayat + 2.500 > 6.000)
+        │
+        ├── TIDAK ──► Lanjut chat berikutnya tanpa ringkas
+        │
+        └── YA ─────► [5. Jalankan Peringkasan (SummarizerService)]
+                           │
+                           ├─ Sisakan 6 pesan terakhir (KEEP_LAST = 6)
+                           ├─ Geser batas potong agar rapi di giliran 'user'
+                           ├─ AI buat ringkasan baru (old summary + batch lama)
+                           ├─ Simpan ke tabel 'summaries'
+                           ├─ Tandai pesan lama: is_summarized = true
+                           └─ Muat ulang riwayat di memori (loadHistory)
+```
+
+### Penjelasan Detail Tiap Langkah
+
+#### 1. Persiapan Riwayat Percakapan (`loadHistory`)
+Saat pertama kali masuk mode chat atau setelah selesai diringkas, context yang dikirim ke AI disusun dari dua komponen:
+- **Ringkasan Lama**: Jika ada ringkasan terakhir di tabel `summaries`, disisipkan sebagai `SystemMessage` dengan format:
+  `"Konteks percakapan sebelumnya (ringkasan):\n<isi ringkasan>"`
+- **Pesan Mentah yang Belum Diringkas**: Mengambil semua baris dari tabel `message` yang memiliki status `is_summarized = false` urut dari pesan tertua ke terbaru.
+
+#### 2. Estimasi & Penyimpanan Token
+- Setiap pesan user dan balasan asisten dihitung perkiraan tokennya memakai formula:
+  $$\text{token} = \lceil \frac{\text{panjang karakter}}{3.5} \rceil$$
+- Nilai ini disimpan langsung ke kolom `total_token` di tabel `message`.
+- Saat streaming selesai, aplikasi juga menangkap metadata `Usage` resmi dari respon server untuk mengetahui jumlah `promptTokens` yang sesungguhnya digunakan.
+- Terminal akan menampilkan log pemakaian token di akhir setiap jawaban:
+  ```text
+  [token] pertanyaan~42 | jawaban~156
+  ```
+
+#### 3. Logika Pemicu Peringkasan (`compactIfNeeded`)
+Peringkasan tidak dipicu sembarangan, melainkan berdasarkan pemakaian token:
+- **Limit Context**: Ditentukan sebesar `PROMPT_LIMIT = 6000` token. Batas ini sudah memperhitungkan context bawaan router/system prompt dasar (~2.000 sampai 2.700 token).
+- **Kondisi Pemicu Utama**: Jika `promptTokens` dari server lebih dari 6.000.
+- **Kondisi Cadangan (Fallback)**: Jika server tidak mengembalikan metadata usage, dihitung perkiraan lokal:
+  $$\text{estimasi riwayat} + 2.500 > 6.000$$
+- Jika salah satu kondisi di atas terpenuhi, proses pemadatan langsung dijalankan.
+
+#### 4. Cara Kerja Peringkasan (`SummarizerService`)
+Proses ringkas berjalan dengan aturan berikut:
+1. **Sisakan Pesan Terakhir**: Minimal **6 pesan terakhir** (`KEEP_LAST = 6`) dibiarkan tetap utuh agar obrolan terbaru tidak kehilangan konteks langsungnya.
+2. **Potong Rapi di Pesan User (Role Alignment)**: Titik potong pesan lama digeser mundur jika perlu agar berhenti tepat sebelum pesan dari `user`. Tujuannya agar giliran tanya-jawab tidak terpotong canggung di tengah-tengah.
+3. **Pencegahan Proses Ganda**: Dilindungi oleh `AtomicBoolean` agar proses ringkas tidak berjalan tumpang tindih.
+4. **Akumulasi Ringkasan**: AI summarizer menerima teks ringkasan sebelumnya (jika ada) ditambah potongan pesan-pesan lama, lalu menghasilkan ringkasan terpadu yang padat.
+5. **Update Status**: Ringkasan baru disimpan ke tabel `summaries`, dan pesan-pesan lama yang sudah dirangkum diubah statusnya menjadi `is_summarized = true`.
+6. **Refresh Memori**: Riwayat in-memory di `ChatCommand` langsung di-clear dan dimuat ulang (`loadHistory()`) dengan ringkasan baru tersebut.
+
+---
+
+## Panduan Peringkasan (Prompt Rules)
+
+Saat AI diminta merangkum riwayat obrolan, prompt sistem mewajibkan:
+- Hanya mencatat poin penting: fakta user, keputusan yang diambil, preferensi, dan hal-hal yang belum selesai.
+- Buang basa-basi, sapaan, dan topik yang sudah tuntas dibahas.
+- Tulis dalam bentuk poin-poin ringkas (maksimal 250 kata).
+- Jika ada info baru yang merevisi info lama, pakai info yang paling baru.
+- Jangan menyalin kode panjang, cukup sebutkan tujuan kode atau nama file/fungsi yang dibahas.
+- Keluarkan teks ringkasan langsung tanpa kalimat pengantar/penutup.
