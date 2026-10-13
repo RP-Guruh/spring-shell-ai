@@ -8,7 +8,7 @@ import org.springframework.web.client.RestClient;
 
 @Configuration
 public class ApiConfig {
-    
+
     @Bean
     RestClient restClient(@Value("${spring.ai.openai.base-url}") String baseUrl,
                           @Value("${spring.ai.openai.api-key}") String apiKey) {

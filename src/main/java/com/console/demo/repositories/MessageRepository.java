@@ -15,7 +15,7 @@ public interface MessageRepository extends JpaRepository<MessageEntity, Long> {
     List<MessageDto> findAllByOrderByIdAsc();
     List<MessageDto> findTop5ByOrderByIdDesc();
 
-    List<MessageDto> findBySummarizedFalseOrderByIdAsc();
+    List<MessageEntity> findBySummarizedFalseOrderByIdAsc();
 
     long countBySummarizedFalse();
 

@@ -5,38 +5,37 @@ import com.console.demo.entities.MessageEntity;
 import com.console.demo.repositories.ConversationRepository;
 import com.console.demo.repositories.MessageRepository;
 import org.springframework.stereotype.Service;
-import java.util.ArrayList;
+
 import java.util.List;
-import java.util.Collections;
 
 @Service
 public class MessageService {
     private final MessageRepository messageRepository;
     private final ConversationRepository conversationRepository;
 
-
     public MessageService(MessageRepository messageRepository, ConversationRepository conversationRepository) {
         this.messageRepository = messageRepository;
         this.conversationRepository = conversationRepository;
     }
 
-    public MessageEntity add(Long conversationId, String role, String content) {
-        return add(conversationId, role, content, false);
+    public MessageEntity add(Long conversationId, String role, String content, Integer totalToken) {
+        return add(conversationId, role, content, false, totalToken);
     }
 
-    public MessageEntity add(Long conversationId, String role, String content, boolean summarized) {
+    public MessageEntity add(Long conversationId, String role, String content, boolean summarized, Integer totalToken) {
         MessageEntity c = new MessageEntity();
         c.setConversation(conversationRepository.getReferenceById(conversationId));
         c.setRole(role);
         c.setContent(content);
         c.setSummarized(summarized);
+        c.setTotalToken(totalToken);
+
         return messageRepository.save(c);
     }
 
-
     public List<MessageDto> getRecent() {
-        List<MessageDto> recent = new ArrayList<>(messageRepository.findTop5ByOrderByIdDesc());
-        Collections.reverse(recent);
-        return recent;
+        return messageRepository.findBySummarizedFalseOrderByIdAsc().stream()
+                .map(m -> new MessageDto(m.getRole(), m.getContent()))
+                .toList();
     }
 }

@@ -25,6 +25,9 @@ public class MessageEntity {
     @Column(nullable = false, name = "is_summarized")
     private Boolean summarized;
 
+    @Column(nullable = false, name = "total_token")
+    private Integer totalToken;
+
     @Column(nullable = false, name = "created_at")
     private LocalDateTime createdAt;
 
@@ -44,6 +47,9 @@ public class MessageEntity {
 
     public String getContent() { return content; }
     public void setContent(String content) { this.content = content; }
+
+    public Integer getTotalToken() { return totalToken; }
+    public void setTotalToken(Integer totalToken) { this.totalToken = totalToken; }
 
     public Boolean getSummarized() { return summarized; }
     public void setSummarized(Boolean summarized) { this.summarized = summarized; }

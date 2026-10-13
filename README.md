@@ -88,6 +88,7 @@ erDiagram
         bigint conversation_id FK
         varchar role
         text content
+        integer total_token
         boolean is_summarized
         timestamp created_at
     }
@@ -121,6 +122,7 @@ erDiagram
      - `conversation_id` (FK ke `conversation.id`, `ManyToOne`, Not Null)
      - `role` (Varchar: `"user"` atau `"assistant"`)
      - `content` (Text, isi pesan)
+     - `total_token` (Integer, estimasi token dihitung dari perkiraan `ceil(karakter / 3.5)`)
      - `is_summarized` (Boolean, penanda apakah pesan sudah diproses ke dalam ringkasan)
      - `created_at` (Timestamp, waktu dibuat)
 
@@ -139,24 +141,39 @@ erDiagram
 ## Logika & Alur Sistem
 
 ### 1. Alur Mode Chat (`ChatCommand`)
-- **Inisialisasi History**:
+- **Inisialisasi Riwayat (History)**:
   Saat command `chat` dijalankan, context memory dibentuk dari:
-  1. Ringkasan terbaru (`summaries`) jika ada, dimasukkan sebagai pesan `system`:
+  1. Ringkasan terbaru (`summaries`) jika ada, dimasukkan sebagai `SystemMessage`:
      `"Konteks percakapan sebelumnya (ringkasan): ..."`
-  2. 5 pesan terakhir (`message`) untuk menjaga kelancaran alur obrolan langsung.
-- **Penyimpanan Percakapan**:
-  - Pada pesan pertama (`saveFirstChat`), entitas `conversation` dibuat dengan `title` dari input pertama.
-  - Setelah respons AI berhasil diterima via streaming, kedua pesan (`user` dan `assistant`) disimpan ke tabel `message`.
-  - Pemicu background summarizer (`summarizerService.summarizeIfNeeded()`) dipanggil secara asynchronous.
+  2. Seluruh pesan yang belum diringkas (`is_summarized = false`) dari database (`messageService.getRecent()`) agar alur dialog aktif tetap lengkap.
+- **Penyimpanan Sesi & Pesan**:
+  - Pada pesan pertama (`saveFirstChat`), entitas `conversation` dibuat dengan `title` dari input pertama (maksimal 50 karakter).
+  - Pesan `user` dan `assistant` masing-masing dihitung estimasi tokennya (`estimate(text) = ceil(length / 3.5)`).
+  - Kedua pesan disimpan ke tabel `message` lengkap dengan kolom `total_token`.
+- **Streaming & Ekstraksi Token Usage**:
+  - Interaksi ke AI menggunakan Spring AI `ChatClient` secara streaming dengan tampilan `ThinkingSpinner` dan efek ketik (typewriter).
+  - Mengambil metadata token asli (`Usage`) dari response stream server (`promptTokens`, `completionTokens`, `totalTokens`).
+  - Menampilkan ringkasan token di terminal: `[token] pertanyaan~X | jawaban~Y`.
+- **Pemicu Pemadatan / Ringkasan (`compactIfNeeded`)**:
+  - **Threshold**: Batas pemicu ringkasan adalah `PROMPT_LIMIT = 6000` token. Angka ini telah memperhitungkan baseline konteks gateway/system prompt router (~2.000–2.700 token).
+  - **Pemicu Utama**: Jika `prompt_tokens` riil dari server melebihi 6.000 token (`promptTokens > PROMPT_LIMIT`).
+  - **Pemicu Cadangan**: Jika usage server kosong, menggunakan estimasi token teks lokal: `estimateHistory(history) + GATEWAY_BASE (2500) > PROMPT_LIMIT`.
+  - Jika ambang batas terlampaui, pemadatan dipicu via `summarizerService.summarize(KEEP_LAST)`.
+  - Setelah ringkasan baru berhasil dibuat dan disimpan, context in-memory dibersihkan dan dimuat ulang (`loadHistory()`) dengan ringkasan terkini dan sisa pesan aktif.
 
 ### 2. Alur & Logika Ringkasan (`SummarizerService`)
-Untuk menjaga ukuran prompt tetap hemat token namun ingatan percakapan tetap terjaga:
-- **Batching Threshold**: Peringkasan dijalankan secara background (`@Async`) hanya jika pesan yang belum diringkas (`is_summarized = false`) mencapai minimal **10 pesan** (`BATCH_SIZE = 10`).
-- **Concurrency Guard**: Menggunakan `AtomicBoolean` (`running`) untuk mencegah dua proses peringkasan berjalan bersamaan.
-- **Akumulasi Konteks**: Mengambil ringkasan terakhir (`oldSummary`) digabungkan dengan 10 pesan baru tertua yang belum diringkas, lalu dikirim ke AI summarizer.
+Untuk menjaga ukuran prompt tetap hemat token tanpa kehilangan memori esensial:
+- **Penyisihan Pesan Terakhir (`KEEP_LAST = 6`)**:
+  Menyisakan minimal 6 pesan aktif terakhir agar obrolan paling mutakhir tidak langsung diringkas dan percakapan tetap berjalan mulus.
+- **Penyelarasan Batas Giliran (Role Alignment)**:
+  Titik potong pesan lama yang akan diringkas (`foldCount`) disesuaikan mundur jika perlu agar batasnya berhenti tepat sebelum giliran pesan `user`, mencegah pasangan tanya-jawab terbelah di tengah jalan.
+- **Concurrency Guard**:
+  Menggunakan `AtomicBoolean` (`running`) untuk memastikan hanya satu proses peringkasan yang berjalan dalam satu waktu.
+- **Akumulasi Konteks**:
+  Mengambil ringkasan terakhir (`oldSummary`) jika ada, digabungkan dengan kumpulan pesan lama yang akan dipadatkan, lalu dikirim ke AI summarizer (`summaryGenerate.generate()`).
 - **Pembaruan Transaksional**:
-  - Menyimpan ringkasan baru ke tabel `summaries`.
-  - Menandai 10 pesan tersebut dengan `is_summarized = true`.
+  - Menyimpan akumulasi ringkasan baru ke tabel `summaries`.
+  - Menandai kumpulan pesan lama tersebut dengan status `is_summarized = true`.
 
 ---
 

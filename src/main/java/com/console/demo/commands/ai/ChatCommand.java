@@ -2,33 +2,37 @@ package com.console.demo.commands.ai;
 
 import com.console.demo.design.ColorsDesign;
 import com.console.demo.design.ThinkingSpinner;
-import com.console.demo.dto.ChatChunk;
-import com.console.demo.dto.ChatMessage;
-import com.console.demo.dto.ChatRequest;
 import com.console.demo.services.*;
 
 import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.UserInterruptException;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.*;
+import org.springframework.ai.chat.metadata.Usage;
+import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.MediaType;
 import org.springframework.shell.core.command.annotation.Command;
 import org.springframework.shell.core.command.annotation.Option;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
-import tools.jackson.databind.json.JsonMapper;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
+
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Component
 public class ChatCommand {
 
-    private static final JsonMapper MAPPER = JsonMapper.builder().build();
     private static final long CHAR_DELAY_MS = 12;
-    private final RestClient restClient;
+
+    // Pemicu rangkuman berdasarkan prompt_tokens asli dari server.
+    // Angka ini SUDAH termasuk dasar gateway (sekitar 2.000-2.700 token).
+    private static final int PROMPT_LIMIT = 6000;
+    // Pesan mentah terakhir yang disisakan saat merangkum.
+    private static final int KEEP_LAST = 6;
+    // Perkiraan dasar gateway, dipakai hanya jika usage dari server kosong.
+    private static final int GATEWAY_BASE = 2500;
+
     private final LineReader lineReader;
     private final String defaultModel;
 
@@ -40,14 +44,23 @@ public class ChatCommand {
     private Boolean saveFirstChat = true;
     private Long idConversation;
 
-    public ChatCommand(@Value("${spring.ai.openai.chat.model}") String defaultModel, RestClient restClient, LineReader lineReader, ConversationService conversationService, MessageService messageService, SummaryService summaryService, SummarizerService summarizerService) {
+    private final ChatClient chatClient;
+    private Usage lastUsage;
+
+    public ChatCommand(@Value("${spring.ai.openai.chat.model}") String defaultModel,
+                       LineReader lineReader,
+                       ConversationService conversationService,
+                       MessageService messageService,
+                       SummaryService summaryService,
+                       SummarizerService summarizerService,
+                       ChatClient.Builder chatClientBuilder) {
         this.defaultModel = defaultModel;
-        this.restClient = restClient;
         this.lineReader = lineReader;
         this.conversationService = conversationService;
         this.messageService = messageService;
         this.summaryService = summaryService;
         this.summarizerService = summarizerService;
+        this.chatClient = chatClientBuilder.build();
     }
 
     @Command(
@@ -60,18 +73,12 @@ public class ChatCommand {
     public String chat(@Option(shortName = 'm', longName = "model",
             description = "Model yang dipakai") String model) {
 
-        model = (model == null || model.isBlank()) ? defaultModel : model;
+        final String activeModel = (model == null || model.isBlank()) ? defaultModel : model;
 
-        // ringkasan terbaru + 5 pesan terakhir
-        List<ChatMessage> history = new ArrayList<>();
-        summaryService.getLatest().ifPresent(s ->
-                history.add(new ChatMessage("system",
-                        "Konteks percakapan sebelumnya (ringkasan):\n" + s.getContent())));
-        messageService.getRecent().stream()
-                .map(m -> new ChatMessage(m.role(), m.content()))
-                .forEach(history::add);
+        // ringkasan terbaru + pesan yang belum dirangkum
+        List<Message> history = new ArrayList<>(loadHistory());
 
-        System.out.println(ColorsDesign.gold("Mode chat (" + model + "). Ketik /exit untuk keluar, /clear untuk reset."));
+        System.out.println(ColorsDesign.gold("Mode chat (" + activeModel + "). Ketik /exit untuk keluar, /clear untuk reset."));
 
         while (true) {
             System.out.println(divider());
@@ -90,33 +97,135 @@ public class ChatCommand {
                 continue;
             }
             System.out.println(divider());
+
             // simpan chat pertama kali
             if (saveFirstChat) {
                 String title = input.length() > 50 ? input.substring(0, 50) : input;
                 idConversation = conversationService.add(title).getId();
                 saveFirstChat = false;
             }
-            history.add(new ChatMessage("user", input));
+            history.add(new UserMessage(input));
 
+            String reply;
             try {
-                String reply = streamReply(model, history);
-
-                if (reply == null || reply.isEmpty()) {
-                    history.remove(history.size() - 1);
-                    System.out.println(ColorsDesign.red("Respons kosong dari server"));
-                } else {
-                    history.add(new ChatMessage("assistant", reply));
-                    messageService.add(idConversation, "user", input);
-                    messageService.add(idConversation, "assistant", reply);
-                    summarizerService.summarizeIfNeeded();
-                }
+                reply = streamReply(activeModel, history);
             } catch (Exception e) {
                 history.remove(history.size() - 1);
                 System.out.println();
                 System.out.println(ColorsDesign.red("✘ " + e.getMessage()));
+                continue;
             }
+
+            if (reply == null || reply.isEmpty()) {
+                history.remove(history.size() - 1);
+                System.out.println(ColorsDesign.red("Respons kosong dari server"));
+                continue;
+            }
+
+            history.add(new AssistantMessage(reply));
+            messageService.add(idConversation, "user", input, estimate(input));
+            messageService.add(idConversation, "assistant", reply, estimate(reply));
+
+            printTokens(input, reply);
+            compactIfNeeded(history);   // kegagalan merangkum tidak mengganggu chat
         }
         return ColorsDesign.gold("Percakapan selesai.");
+    }
+
+    private String streamReply(String model, List<Message> history) {
+        StringBuilder full = new StringBuilder();
+        ThinkingSpinner spinner =
+                new ThinkingSpinner(lineReader.getTerminal(), "AI Sedang Berpikir").start();
+        boolean[] first = {true};
+        AtomicReference<Usage> usage = new AtomicReference<>();
+
+        try {
+            chatClient.prompt()
+                    .options(ChatOptions.builder().model(model).temperature(0.7))
+                    .messages(history)
+                    .stream()
+                    .chatResponse()
+                    .doOnNext(r -> {
+                        if (r.getMetadata() != null && r.getMetadata().getUsage() != null
+                                && r.getMetadata().getUsage().getTotalTokens() != null
+                                && r.getMetadata().getUsage().getTotalTokens() > 0) {
+                            usage.set(r.getMetadata().getUsage());
+                        }
+
+                        if (r.getResult() == null || r.getResult().getOutput() == null) return;
+                        String text = r.getResult().getOutput().getText();
+                        if (text == null || text.isEmpty()) return;
+
+                        if (first[0]) {
+                            first[0] = false;
+                            spinner.stop();
+                            System.out.print(ColorsDesign.gold("AI  ❯ "));
+                            System.out.flush();
+                        }
+
+                        typewrite(text);
+                        full.append(text);
+                    })
+                    .blockLast();
+        } finally {
+            spinner.stop();
+        }
+
+        if (!first[0]) {
+            System.out.println();
+        }
+
+        lastUsage = usage.get();
+        return full.toString();
+    }
+
+    /**
+     * Pemicu utama: prompt_tokens asli dari server.
+     * Cadangan: estimasi dari teks jika usage kosong.
+     */
+    private void compactIfNeeded(List<Message> history) {
+        Integer promptTokens = (lastUsage != null) ? lastUsage.getPromptTokens() : null;
+
+        boolean need = (promptTokens != null)
+                ? promptTokens > PROMPT_LIMIT
+                : estimateHistory(history) + GATEWAY_BASE > PROMPT_LIMIT;
+        if (!need) return;
+
+        try {
+            System.out.println(ColorsDesign.gold("[ringkasan] memadatkan riwayat lama..."));
+            if (summarizerService.summarize(KEEP_LAST)) {
+                history.clear();
+                history.addAll(loadHistory());
+                System.out.println(ColorsDesign.gold("[ringkasan] selesai"));
+            } else {
+                System.out.println(ColorsDesign.gold("[ringkasan] belum berhasil, dicoba lagi nanti"));
+            }
+        } catch (Exception e) {
+            System.out.println(ColorsDesign.red("[ringkasan gagal, dicoba lagi nanti] " + e.getMessage()));
+        }
+    }
+
+    private List<Message> loadHistory() {
+        List<Message> h = new ArrayList<>();
+        summaryService.getLatest().ifPresent(s ->
+                h.add(new SystemMessage("Konteks percakapan sebelumnya (ringkasan):\n" + s.getContent())));
+        messageService.getRecent().stream()
+                .map(m -> toAiMessage(m.role(), m.content()))
+                .forEach(h::add);
+        return h;
+    }
+
+    private void printTokens(String question, String answer) {
+        String line = String.format("[token] pertanyaan~%d | jawaban~%d",
+                estimate(question), estimate(answer));
+
+//        if (lastUsage != null) {
+//            line += String.format(" | server: prompt=%d, jawaban=%d, total=%d",
+//                    lastUsage.getPromptTokens(),
+//                    lastUsage.getCompletionTokens(),
+//                    lastUsage.getTotalTokens());
+//        }
+        System.out.println(ColorsDesign.gold(line));
     }
 
     private void typewrite(String text) {
@@ -131,78 +240,44 @@ public class ChatCommand {
             if (CHAR_DELAY_MS <= 0 || cp == '\n') continue;
 
             long delay = CHAR_DELAY_MS;
-            if (cp == '.' || cp == '!' || cp == '?') delay *= 8;   // jeda di akhir kalimat
+            if (cp == '.' || cp == '!' || cp == '?') delay *= 8;
             else if (cp == ',' || cp == ';' || cp == ':') delay *= 4;
 
             try {
                 Thread.sleep(delay);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                System.out.print(text.substring(i));   // tampilkan sisanya sekaligus
+                System.out.print(text.substring(i));
                 return;
             }
-
-
         }
     }
 
-    private String streamReply(String model, List<ChatMessage> history) {
-        StringBuilder full = new StringBuilder();
-        ThinkingSpinner spinner =
-                new ThinkingSpinner(lineReader.getTerminal(), "AI Sedang Berpikir").start();
-        boolean[] first = {true};
-
-        try {
-            restClient.post()
-                    .uri("/v1/chat/completions")
-                    .accept(MediaType.TEXT_EVENT_STREAM)
-                    .body(new ChatRequest(model, history, true))
-                    .exchange((request, response) -> {
-                        if (response.getStatusCode().isError()) {
-                            throw new IllegalStateException(
-                                    "Server membalas error " + response.getStatusCode().value());
-                        }
-                        try (BufferedReader reader = new BufferedReader(
-                                new InputStreamReader(response.getBody(), StandardCharsets.UTF_8))) {
-                            String line;
-                            while ((line = reader.readLine()) != null) {
-                                if (!line.startsWith("data:")) continue;
-
-                                String json = line.substring(5).trim();
-                                if (json.isEmpty()) continue;
-                                if (json.equals("[DONE]")) break;
-
-                                ChatChunk chunk = MAPPER.readValue(json, ChatChunk.class);
-                                if (chunk.choices() == null || chunk.choices().isEmpty()) continue;
-
-                                ChatChunk.Delta delta = chunk.choices().get(0).delta();
-                                if (delta == null || delta.content() == null) continue;
-
-                                if (first[0]) {
-                                    first[0] = false;
-                                    spinner.stop();
-                                    System.out.print(ColorsDesign.gold("AI  ❯ "));
-                                    System.out.flush();
-                                }
-
-                                typewrite(delta.content());
-                                full.append(delta.content());
-                            }
-                        }
-                        return null;
-                    });
-        } finally {
-            spinner.stop();
-        }
-
-        if (!first[0]) {
-            System.out.println();
-        }
-        return full.toString();
-    }
     private String divider() {
         int width = lineReader.getTerminal().getWidth();
         if (width <= 0) width = 60;
         return ColorsDesign.gold("─".repeat(Math.min(width, 80)));
+    }
+
+    private Message toAiMessage(String role, String content) {
+        if ("user".equalsIgnoreCase(role)) {
+            return new UserMessage(content);
+        } else if ("assistant".equalsIgnoreCase(role)) {
+            return new AssistantMessage(content);
+        }
+        return new SystemMessage(content);
+    }
+
+    private int estimate(String s) {
+        if (s == null || s.isEmpty()) return 0;
+        return (int) Math.ceil(s.length() / 3.5);
+    }
+
+    private int estimateHistory(List<Message> history) {
+        int total = 0;
+        for (Message m : history) {
+            total += estimate(m.getText());
+        }
+        return total;
     }
 }
