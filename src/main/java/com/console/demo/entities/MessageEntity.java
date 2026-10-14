@@ -1,6 +1,9 @@
 package com.console.demo.entities;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.Array;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
 
@@ -27,6 +30,11 @@ public class MessageEntity {
 
     @Column(nullable = false, name = "total_token")
     private Integer totalToken;
+
+    @JdbcTypeCode(SqlTypes.VECTOR)
+    @Array(length = 1024)
+    @Column(name = "vector")
+    private float[] vector;
 
     @Column(nullable = false, name = "created_at")
     private LocalDateTime createdAt;
@@ -55,6 +63,9 @@ public class MessageEntity {
     public void setSummarized(Boolean summarized) { this.summarized = summarized; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
+
+    public float[] getVector() { return vector; }
+    public void setVector(float[] vector) { this.vector = vector; }
 
 
 }

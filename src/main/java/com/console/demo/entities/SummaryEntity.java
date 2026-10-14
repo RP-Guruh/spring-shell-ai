@@ -1,7 +1,12 @@
 package com.console.demo.entities;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.Array;
+import org.hibernate.annotations.JdbcType;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
+import java.sql.SQLType;
 import java.time.LocalDateTime;
 
 @Entity
@@ -23,6 +28,11 @@ public class SummaryEntity {
 
     @Column(name = "count_message")
     private Integer countMessage;
+
+    @JdbcTypeCode(SqlTypes.VECTOR)
+    @Array(length = 1024)
+    @Column(name = "vector")
+    private float[] vector;
 
     @Column(nullable = false, name = "created_at")
     private LocalDateTime createdAt;
@@ -47,5 +57,8 @@ public class SummaryEntity {
     public void setCountMessage(Integer countMessage) { this.countMessage = countMessage; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
+
+    public float[] getVector() { return vector; }
+    public void setVector(float[] vector) { this.vector = vector; }
 
 }
