@@ -10,7 +10,7 @@ Aplikasi ini dirancang bukan sekadar sebagai antarmuka chat biasa, melainkan dil
 
 - **Terminal Chat Interaktif & Streaming**: Tampilan respons teks mengalir (*streaming/SSE*) dengan indikator *thinking spinner* dan *markdown renderer*.
 - **File Mention & Autocomplete (`@`)**: Kemampuan menyertakan file atau direktori ke dalam konteks obrolan menggunakan `@path` dengan auto-completion tombol Tab (via JLine `MentionCompleter`).
-- **Tool Calling Dinamis & Human-in-the-Loop**: Model AI dapat memanggil tool Java secara mandiri untuk data cuaca riil (`WeatherTool`) dan manipulasi berkas (`ManipulateFile`). Setiap operasi perubahan file (buat, edit, hapus) mewajibkan konfirmasi interaktif dari pengguna di terminal.
+- **Tool Calling Dinamis & Human-in-the-Loop**: Model AI dapat memanggil tool Java secara mandiri untuk data cuaca riil (`WeatherTool`) dan manipulasi berkas (`ManipulateFile`). Setiap operasi perubahan file (buat, edit, hapus) mewajibkan konfirmasi interaktif dari pengguna di terminal menggunakan TUI component (`SingleItemSelector`).
 - **Manajemen Konteks & Auto-Compaction**: Memantau konsumsi token secara otomatis; saat obrolan melebihi batas, pesan lama diringkas di latar belakang (*background task*) tanpa menginterupsi jalannya chat.
 - **Semantic Long-Term Memory (pgvector)**: Menyimpan embedding pasangan tanya-jawab dan ringkasan ke dalam database vektor PostgreSQL berdimensi 1024 (*bge-m3* via Ollama). Memungkinkan RAG (*Retrieval-Augmented Generation*) untuk memanggil kembali memori lampau yang relevan.
 - **Pencarian Riwayat Cerdas (`/search`)**: Mencari potongan tanya-jawab lama menggunakan *cosine similarity* langsung dari dalam sesi obrolan.
@@ -303,14 +303,15 @@ Alur Kerja Tool Calling & Approval:
                  ▼
     [Eksekusi ManipulateFile.java]
                  │
-                 ├── Butuh mutasi file! Tampilkan diff ke terminal:
-                 │   Konfirmasi: EDIT FILE application.properties
+                 ├── Butuh mutasi file! Tampilkan diff & TUI selector ke terminal:
+                 │   [PERSETUJUAN] EDIT FILE application.properties
                  │   - server.port=8080
                  │   + server.port=8081
-                 │   Izinkan? (y/N): 
+                 │   > Tolak
+                 │     Setujui
                  │
-                 ├─ User pilih 'y' ──► Tulis perubahan ke disk
-                 └─ User pilih 'N' ──► Batalkan, laporkan penolakan ke LLM
+                 ├─ User pilih 'Setujui' ──► Tulis perubahan ke disk
+                 └─ User pilih 'Tolak'   ──► Batalkan, laporkan penolakan ke LLM
                  │
                  ▼
          [Jawaban Akhir AI] ──► Tampil di terminal via streaming
@@ -366,15 +367,17 @@ Mengemas endpoint WeatherAPI menjadi fungsi teranotasi `@Tool`:
 5. **`deleteFile(path)`**: Menghapus satu berkas reguler (bukan direktori). Menampilkan path dan ukuran berkas sebelum meminta persetujuan user.
 
 #### C. Mekanisme Keamanan (Human-in-the-Loop & Guardrails)
-- **Konfirmasi Interaktif Terminal**: Setiap operasi mutasi berkas (`createFile`, `editFile`, `deleteFile`, atau `readFile` di luar berkas yang di-mention) memicu `approver` callback (`BiPredicate<String, String>`). Spinner berhenti sementara, terminal menampilkan detail aksi/diff, lalu menunggu input pengguna:
+- **Konfirmasi Interaktif Terminal (SingleItemSelector TUI)**: Setiap operasi mutasi berkas (`createFile`, `editFile`, `deleteFile`, atau `readFile` di luar berkas yang di-mention) memicu `approver` callback (`BiPredicate<String, String>`). Spinner berhenti sementara, terminal menampilkan detail aksi/diff, lalu memunculkan komponen interaktif TUI (`SingleItemSelector` dari Spring Shell):
   ```text
-  [?] Konfirmasi aksi agent:
-      Aksi  : EDIT FILE /path/to/demo/application.properties
-      Detail:
-      - server.port=8080
-      + server.port=8081
-  Izinkan? (y/N): 
+  [PERSETUJUAN] EDIT FILE /path/to/demo/application.properties
+  Detail:
+  - server.port=8080
+  + server.port=8081
+
+  > Tolak
+    Setujui
   ```
+  Pengguna menavigasi pilihan dengan tombol panah (arrow keys) dan menekan Enter. Secara default bernilai aman (`Tolak` jika pengguna menekan cancel/Ctrl+C atau terjadi interupsi).
 - **Batas Ukuran Baca (`MAX_READ`)**: File teks di atas 100.000 byte (100 KB) ditandai dengan `[file terlalu besar]` untuk mencegah kehabisan token context window.
 - **Proteksi Prompt Injection**: System prompt menegaskan bahwa teks di dalam tag `<file>` adalah data pasif untuk dianalisis, bukan instruksi yang boleh dijalankan oleh model.
 - **Anti-Perulangan Aksi Ditolak**: Jika pengguna menolak suatu tindakan (`N`), model diinstruksikan untuk tidak mengulang permintaan aksi yang sama secara sepihak.
@@ -399,7 +402,7 @@ Berikut ringkasan siklus hidup sebuah pesan di dalam aplikasi:
           │
           ├── Apakah model membutuhkan data eksternal / aksi lokal?
           │         ├─ Data Cuaca ──► Panggil WeatherTool ──► Kembalikan JSON/data riil
-          │         ├─ Operasi File ─► Panggil ManipulateFile ──► [Konfirmasi Terminal (y/N)]
+          │         ├─ Operasi File ─► Panggil ManipulateFile ──► [Konfirmasi TUI: Tolak/Setujui]
           │         └─ Tidak Ada ────────────────────────┐
           │                                              │
           ▼                                              ▼

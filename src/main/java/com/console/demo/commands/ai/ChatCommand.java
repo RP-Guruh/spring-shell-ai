@@ -15,6 +15,7 @@ import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
 import org.jline.reader.UserInterruptException;
+import org.jline.terminal.Terminal;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
@@ -24,17 +25,19 @@ import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.ResourceLoader;
 import org.springframework.shell.core.command.annotation.Command;
 import org.springframework.shell.core.command.annotation.Option;
+import org.springframework.shell.jline.tui.component.SingleItemSelector;
+import org.springframework.shell.jline.tui.component.support.SelectorItem;
+import org.springframework.shell.jline.tui.style.TemplateExecutor;
 import org.springframework.stereotype.Component;
 
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -79,6 +82,10 @@ public class ChatCommand {
     private final WeatherTool weatherTool;
     private final ManipulateFile manipulateFile;
 
+    private final Terminal terminal;
+    private final ResourceLoader resourceLoader;
+    private final TemplateExecutor templateExecutor;
+
     private final ExecutorService summaryExecutor =
             Executors.newSingleThreadExecutor(runnable -> {
                 Thread thread = new Thread(runnable, "summarizer");
@@ -100,7 +107,10 @@ public class ChatCommand {
                        SummarizerService summarizerService,
                        ChatClient.Builder chatClientBuilder,
                        WeatherTool weatherTool,
-                       ManipulateFile manipulateFile) {
+                       ManipulateFile manipulateFile,
+                       Terminal terminal,
+                       ResourceLoader resourceLoader,
+                       TemplateExecutor templateExecutor) {
         this.defaultModel = defaultModel;
         this.lineReader = lineReader;
         this.conversationService = conversationService;
@@ -114,6 +124,9 @@ public class ChatCommand {
                 .terminal(lineReader.getTerminal())
                 .completer(new MentionCompleter())
                 .build();
+        this.terminal = terminal;
+        this.resourceLoader = resourceLoader;
+        this.templateExecutor = templateExecutor;
     }
 
     @Command(
@@ -230,13 +243,30 @@ public class ChatCommand {
         manipulateFile.setApprover((action, detail) -> {
             spinner.get().stop();
             try {
-                var out = lineReader.getTerminal().writer();
-                out.println("\n[APPROVAL] " + action);
+                var out = terminal.writer();
+                out.println("\n[PERSETUJUAN] " + action);
                 if (!detail.isEmpty()) out.println(detail);
                 out.flush();
-                String answer = lineReader.readLine("Izinkan? (y/N): ");
-                return answer != null && answer.trim().equalsIgnoreCase("y");
+
+                List<SelectorItem<String>> items = List.of(
+                        SelectorItem.of("Tolak", "n"),
+                        SelectorItem.of("Setujui", "y")
+                );
+
+                SingleItemSelector<String, SelectorItem<String>> component =
+                        new SingleItemSelector<>(terminal, items, action, null);
+                component.setResourceLoader(resourceLoader);
+                component.setTemplateExecutor(templateExecutor);
+
+                var context = component.run(SingleItemSelector.SingleItemSelectorContext.empty());
+
+                return context.getResultItem()
+                        .map(SelectorItem::getItem)
+                        .map("y"::equals)
+                        .orElse(false);
             } catch (UserInterruptException | EndOfFileException e) {
+                return false;
+            } catch (Exception e) {
                 return false;
             } finally {
                 if (!started.get()) spinner.set(newSpinner());
