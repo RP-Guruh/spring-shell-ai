@@ -1,16 +1,37 @@
 spring.application.name=demo
 
-# AI Provider / OpenAI-compatible API
+# AI Provider / OpenAI-compatible API (9Router / vLLM / OpenAI)
 spring.ai.openai.api-key=your-api-key-here
-spring.ai.openai.base-url=http://localhost:20128
-spring.ai.openai.chat.model=YOUR_COMBO
+spring.ai.openai.base-url=http://localhost:20128/v1
+spring.ai.openai.chat.model=your-chat-model
+spring.ai.openai.chat.options.stream-usage=true
+spring.ai.model.chat=openai
+spring.ai.openai.timeout=300s
 
-# Database Configuration (PostgreSQL)
-spring.jpa.hibernate.ddl-auto=update
-spring.jpa.show-sql=true # ganti ke false agar return sql nya tidak terlihat
-spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
+# Ollama Embedding Model (bge-m3 untuk pgvector)
+spring.ai.ollama.base-url=http://localhost:11434
+spring.ai.ollama.embedding.model=bge-m3
+spring.ai.ollama.embedding.keep-alive=30m
+spring.ai.model.embedding=ollama
 
-spring.datasource.url=jdbc:postgresql://localhost:5432/YOUR_DB
+# Database Configuration (PostgreSQL + pgvector)
+spring.datasource.url=jdbc:postgresql://localhost:5432/shell_ai
 spring.datasource.username=postgres
 spring.datasource.password=your_password_here
 spring.datasource.driver-class-name=org.postgresql.Driver
+
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.show-sql=false
+spring.jpa.properties.hibernate.format_sql=false
+spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
+spring.main.banner-mode=off
+
+# Weather Tool (WeatherAPI - https://www.weatherapi.com/)
+weather.api-key=your_weatherapi_key_here
+weather.max-past-days=7
+weather.max-future-offset=2
+
+# Logging configuration
+logging.level.org.hibernate=OFF
+logging.level.org.springframework.ai=INFO
+logging.level.org.springframework.shell=WARN

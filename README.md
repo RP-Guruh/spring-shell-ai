@@ -9,10 +9,11 @@ Aplikasi ini dirancang bukan sekadar sebagai antarmuka chat biasa, melainkan dil
 ## Fitur Utama
 
 - **Terminal Chat Interaktif & Streaming**: Tampilan respons teks mengalir (*streaming/SSE*) dengan indikator *thinking spinner* dan *markdown renderer*.
+- **File Mention & Autocomplete (`@`)**: Kemampuan menyertakan file atau direktori ke dalam konteks obrolan menggunakan `@path` dengan auto-completion tombol Tab (via JLine `MentionCompleter`).
+- **Tool Calling Dinamis & Human-in-the-Loop**: Model AI dapat memanggil tool Java secara mandiri untuk data cuaca riil (`WeatherTool`) dan manipulasi berkas (`ManipulateFile`). Setiap operasi perubahan file (buat, edit, hapus) mewajibkan konfirmasi interaktif dari pengguna di terminal.
 - **Manajemen Konteks & Auto-Compaction**: Memantau konsumsi token secara otomatis; saat obrolan melebihi batas, pesan lama diringkas di latar belakang (*background task*) tanpa menginterupsi jalannya chat.
 - **Semantic Long-Term Memory (pgvector)**: Menyimpan embedding pasangan tanya-jawab dan ringkasan ke dalam database vektor PostgreSQL berdimensi 1024 (*bge-m3* via Ollama). Memungkinkan RAG (*Retrieval-Augmented Generation*) untuk memanggil kembali memori lampau yang relevan.
 - **Pencarian Riwayat Cerdas (`/search`)**: Mencari potongan tanya-jawab lama menggunakan *cosine similarity* langsung dari dalam sesi obrolan.
-- **Tool Calling Dinamis (Spring AI)**: Model AI dapat mengeksekusi fungsi Java lokal secara otonom saat membutuhkan data eksternal faktual (tersedia bawaan: `WeatherTool` berbasis WeatherAPI).
 - **Fleksibilitas Model & Profiling Token**: Bebas ganti model saat runtime (`chat -m <model>`), cek daftar model server (`models`), serta pelacakan token pertanyaan dan jawaban secara transparan.
 
 ---
@@ -58,23 +59,32 @@ cp src/main/resources/application.properties.example src/main/resources/applicat
 Sesuaikan isian di `src/main/resources/application.properties`:
 
 ```properties
-# LLM Provider (OpenAI / 9Router / vLLM)
+# LLM Provider (OpenAI-compatible / 9Router / vLLM)
 spring.ai.openai.api-key=YOUR_API_KEY
-spring.ai.openai.base-url=http://localhost:20128
+spring.ai.openai.base-url=http://localhost:20128/v1
 spring.ai.openai.chat.model=YOUR_DEFAULT_MODEL
+spring.ai.openai.chat.options.stream-usage=true
+spring.ai.openai.timeout=300s
+spring.ai.model.chat=openai
 
-# Embedding Model (Ollama bge-m3)
+# Embedding Model (Ollama bge-m3 untuk pgvector)
 spring.ai.ollama.base-url=http://localhost:11434
 spring.ai.ollama.embedding.model=bge-m3
+spring.ai.ollama.embedding.keep-alive=30m
+spring.ai.model.embedding=ollama
 
 # Database PostgreSQL + pgvector
 spring.datasource.url=jdbc:postgresql://localhost:5432/shell_ai
 spring.datasource.username=postgres
 spring.datasource.password=YOUR_PASSWORD
+spring.datasource.driver-class-name=org.postgresql.Driver
 spring.jpa.hibernate.ddl-auto=update
+spring.jpa.show-sql=false
 
-# Tool Cuaca (Opsional)
-app.weather.api-key=YOUR_WEATHERAPI_KEY
+# Tool Cuaca (WeatherAPI - https://www.weatherapi.com/)
+weather.api-key=YOUR_WEATHERAPI_KEY
+weather.max-past-days=7
+weather.max-future-offset=2
 ```
 
 ---
@@ -115,6 +125,7 @@ java -jar target/demo-0.0.1-SNAPSHOT.jar
 
 Ketika sesi percakapan sedang aktif:
 
+- `@<path>` : Melampirkan file atau isi folder langsung ke prompt (contoh: `@pom.xml`, `@src/main`, atau `@"folder dengan spasi"`). Tekan tombol **Tab** untuk auto-completion direktori dan nama file.
 - `/search <kata kunci>` : Melakukan pencarian semantik berbasis vektor terhadap arsip obrolan lampau dan menampilkan skor kemiripan (*similarity score*).
 - `/clear` : Mereset *context window* obrolan di sesi aktif saat ini.
 - `/exit` : Menutup sesi chat dan kembali ke shell utama.
@@ -271,26 +282,36 @@ Untuk pesan-pesan lama atau entri yang belum memiliki nilai vektor (misalnya dat
 
 ## Implementasi Tool Calling (Spring AI Functions)
 
-Aplikasi memanfaatkan kapabilitas **Function/Tool Calling** bawaan Spring AI untuk menghubungkan model bahasa dengan dunia luar secara deterministik.
+Aplikasi memanfaatkan kapabilitas **Function/Tool Calling** bawaan Spring AI untuk menghubungkan model bahasa dengan lingkungan eksternal dan filesystem lokal secara terukur dan aman.
 
 ```text
-Alur Kerja Tool Calling:
-[User: "Gimana cuaca besok di Bandung?"]
+Alur Kerja Tool Calling & Approval:
+[User: "Tolong ubah port di @application.properties jadi 8081"]
+                 │
+                 ├── 1. Mention Expansion: baca @application.properties
+                 │      Lampirkan isi file ke prompt sebagai <file>
                  │
                  ▼
-          [ChatClient API]
-                 │ (Prompt + WeatherTool metadata terdaftar)
+          [ChatClient API] (Prompt + Tools: WeatherTool & ManipulateFile)
+                 │
                  ▼
              [LLM Server]
                  │
-                 ├─ Deteksi kebutuhan tool: getWeatherByDay(lokasi="Bandung", offsetHari=1)
+                 ├─ Analisis teks lama vs teks baru
+                 ├─ Minta pemanggilan tool: editFile(".../application.properties", old, new)
                  │
                  ▼
-       [Eksekusi WeatherTool.java]
-                 │ (Panggil WeatherAPI via RestClient)
-                 ▼
-          [Data Cuaca Riil]
-                 │ (Hasil JSON / format teks dikembalikan ke LLM)
+    [Eksekusi ManipulateFile.java]
+                 │
+                 ├── Butuh mutasi file! Tampilkan diff ke terminal:
+                 │   Konfirmasi: EDIT FILE application.properties
+                 │   - server.port=8080
+                 │   + server.port=8081
+                 │   Izinkan? (y/N): 
+                 │
+                 ├─ User pilih 'y' ──► Tulis perubahan ke disk
+                 └─ User pilih 'N' ──► Batalkan, laporkan penolakan ke LLM
+                 │
                  ▼
          [Jawaban Akhir AI] ──► Tampil di terminal via streaming
 ```
@@ -302,26 +323,61 @@ chatClient.prompt()
         .system(systemPrompt)
         .options(ChatOptions.builder().model(model).temperature(0.2))
         .messages(prompt)
-        .tools(weatherTool) // Registrasi bean Spring AI Tool
+        .tools(weatherTool, manipulateFile) // Registrasi bean Spring AI Tool
         .stream()
         .chatResponse()
 ```
 
-### 2. Fungsi yang Tersedia di `WeatherTool`
-`WeatherTool` mengemas endpoint WeatherAPI menjadi fungsi-fungsi Java teranotasi `@Tool` dan `@ToolParam`:
+---
+
+### 2. Tool Cuaca (`WeatherTool`)
+Mengemas endpoint WeatherAPI menjadi fungsi teranotasi `@Tool`:
 
 1. **`getCurrentWeather(lokasi)`**:
    Mengambil kondisi cuaca realtime saat ini, suhu aktual, suhu terasa (*feelslike*), kelembapan, kecepatan angin, dan indeks UV.
 2. **`getWeatherByDay(lokasi, offsetHari)`**:
-   Mendapatkan prakiraan atau data riwayat berdasarkan selisih hari dari hari ini (`-1` kemarin, `0` hari ini, `1` besok, `2` lusa). Model tidak perlu menghitung tanggal absolut kalender; cukup memberikan nilai offset relatif.
+   Mendapatkan prakiraan atau riwayat cuaca berdasarkan selisih hari (`-1` kemarin, `0` hari ini, `1` besok, `2` lusa). Model tidak perlu menghitung tanggal kalender; cukup memberikan nilai offset relatif terhadap lokasi setempat.
 3. **`getWeatherRange(lokasi, offsetAwal, offsetAkhir)`**:
    Mengambil ringkasan tren cuaca dalam rentang beberapa hari (misal 7 hari terakhir: `offsetAwal = -7, offsetAkhir = -1`).
 4. **`getWeatherHourly(lokasi, offsetHari, jamMulai, jamAkhir)`**:
    Mendapatkan rincian kondisi cuaca per jam pada rentang waktu tertentu.
 
-### 3. Proteksi & Isolasi Konteks Cuaca
-- **Anti-Halusinasi**: *System prompt* mewajibkan model untuk memanggil tool saat user menanyakan cuaca dan dilarang mengarang atau menggunakan memori kadaluarsa.
-- **Pembersihan RAG**: Sistem secara proaktif memfilter topik cuaca dari proses RAG (`isWeatherText`). Tujuannya agar kondisi cuaca kemarin atau hari-hari lampau yang tersimpan di database tidak bocor dan menyesatkan jawaban cuaca hari ini.
+**Proteksi & Isolasi Konteks Cuaca:**
+- *Anti-Halusinasi*: System prompt mewajibkan model memanggil tool saat user menanyakan cuaca dan dilarang mengarang tanggal/data.
+- *Filter RAG*: Topik cuaca disaring dari proses RAG (`isWeatherText`) agar data cuaca lampau di database tidak mencemari jawaban cuaca hari ini.
+
+---
+
+### 3. Tool File System & Mention (`ManipulateFile`)
+
+`ManipulateFile` memungkinkan model membaca, membuat, menyunting, dan menghapus berkas di sistem file lokal, dilengkapi mekanisme persetujuan pengguna (*Human-in-the-Loop*).
+
+#### A. Fitur Mention `@` & Auto-Completion Tab (`MentionCompleter`)
+- **Sintaks**: Mendukung format `@path/file.txt`, `@"nama folder/file dengan spasi"`, atau `@~/folder` (mengarah ke home direktori pengguna).
+- **Auto-Completion**: Didukung oleh implementasi JLine `MentionCompleter`, pengguna cukup mengetik `@` lalu menekan tombol **Tab** untuk melihat saran berkas dan subdirektori.
+- **Ekspansi Otomatis ke Prompt**: Sebelum prompt dikirim ke model, isi file atau daftar isi folder yang di-`@` otomatis diekstraksi dan disuntikkan ke dalam tag `<file path="...">...</file>`.
+- **Akses Langsung (Granted)**: Berkas yang sudah di-`@` secara eksplisit oleh pengguna otomatis diberi izin baca tanpa perlu konfirmasi berulang.
+
+#### B. Daftar Fungsi di `ManipulateFile`
+1. **`listFiles(dir)`**: Menampilkan daftar file dan subfolder di direktori yang dituju.
+2. **`readFile(path)`**: Membaca isi berkas teks. Jika file berada di luar daftar yang di-`@`, sistem akan meminta konfirmasi user terlebih dahulu.
+3. **`createFile(path, content)`**: Membuat file baru beserta folder induknya. Operasi gagal jika file sudah ada (mengarahkan model memakai `editFile`). Mewajibkan persetujuan user.
+4. **`editFile(path, oldText, newText)`**: Mengedit berkas dengan mengganti cuplikan teks yang unik (`oldText` harus muncul tepat satu kali). Menampilkan cuplikan diff `oldText` vs `newText` sebelum meminta persetujuan user.
+5. **`deleteFile(path)`**: Menghapus satu berkas reguler (bukan direktori). Menampilkan path dan ukuran berkas sebelum meminta persetujuan user.
+
+#### C. Mekanisme Keamanan (Human-in-the-Loop & Guardrails)
+- **Konfirmasi Interaktif Terminal**: Setiap operasi mutasi berkas (`createFile`, `editFile`, `deleteFile`, atau `readFile` di luar berkas yang di-mention) memicu `approver` callback (`BiPredicate<String, String>`). Spinner berhenti sementara, terminal menampilkan detail aksi/diff, lalu menunggu input pengguna:
+  ```text
+  [?] Konfirmasi aksi agent:
+      Aksi  : EDIT FILE /path/to/demo/application.properties
+      Detail:
+      - server.port=8080
+      + server.port=8081
+  Izinkan? (y/N): 
+  ```
+- **Batas Ukuran Baca (`MAX_READ`)**: File teks di atas 100.000 byte (100 KB) ditandai dengan `[file terlalu besar]` untuk mencegah kehabisan token context window.
+- **Proteksi Prompt Injection**: System prompt menegaskan bahwa teks di dalam tag `<file>` adalah data pasif untuk dianalisis, bukan instruksi yang boleh dijalankan oleh model.
+- **Anti-Perulangan Aksi Ditolak**: Jika pengguna menolak suatu tindakan (`N`), model diinstruksikan untuk tidak mengulang permintaan aksi yang sama secara sepihak.
 
 ---
 
@@ -332,16 +388,21 @@ Berikut ringkasan siklus hidup sebuah pesan di dalam aplikasi:
 ```text
 [1. Input User Diterima]
           │
-          ├── Evaluasi input: jika ada konteks masa lalu relevan ──► Suntikkan via RAG (searchPast)
+          ├── Parsing Mention (@path / @"path spasi")
+          │         ├─ File ditemukan: sisipkan isi ke dalam <file path="...">
+          │         └─ File tidak ada: beri penanda file tidak ditemukan
+          │
+          ├── Evaluasi RAG: jika ada konteks masa lalu relevan ──► Suntikkan via searchPast
           │
           ▼
 [2. Kirim ke LLM Streaming (chatClient)]
           │
-          ├── Apakah model membutuhkan data eksternal?
-          │         ├─ YA ──► Panggil WeatherTool ──► Kembalikan data riil ke model
-          │         └─ TIDAK ─────────────────────────┐
-          │                                           │
-          ▼                                           ▼
+          ├── Apakah model membutuhkan data eksternal / aksi lokal?
+          │         ├─ Data Cuaca ──► Panggil WeatherTool ──► Kembalikan JSON/data riil
+          │         ├─ Operasi File ─► Panggil ManipulateFile ──► [Konfirmasi Terminal (y/N)]
+          │         └─ Tidak Ada ────────────────────────┐
+          │                                              │
+          ▼                                              ▼
 [3. Tampilkan Balasan via Terminal Stream & Spinner]
           │
           ▼
@@ -358,7 +419,7 @@ Berikut ringkasan siklus hidup sebuah pesan di dalam aplikasi:
           │         │
           │         └─ YA ─────► [6. Jalankan Background Compaction]
           │                            │
-          │                            ├─ Sisakan 6 pesan terakhir (KEEP_LAST = 6)
+          ├─ Sisakan 6 pesan terakhir (KEEP_LAST = 6)
           │                            ├─ Rangkum batch pesan lama via SummarizerService
           │                            ├─ Simpan ringkasan baru + vector ke tabel 'summaries'
           │                            ├─ Update status pesan lama: summarized = true

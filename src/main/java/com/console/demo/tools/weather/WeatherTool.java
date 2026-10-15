@@ -22,19 +22,6 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * Tool cuaca berbasis OFFSET HARI.
- *
- * Model TIDAK menghitung tanggal. Untuk "kemarin", "besok", "lusa", dst.
- * model cukup mengirim selisih hari (-1, 1, 2, ...). Java yang mengubahnya
- * menjadi tanggal berdasarkan tanggal LOKAL lokasi yang ditanyakan.
- *
- * Konfigurasi (application.yml):
- *   weather:
- *     api-key: ${WEATHER_API_KEY}
- *     max-past-days: 7        # batas arsip sesuai paket WeatherAPI
- *     max-future-offset: 2    # paket gratis: 3 hari termasuk hari ini
- */
 @Service
 public class WeatherTool {
 
@@ -66,7 +53,7 @@ public class WeatherTool {
     }
 
     // =========================================================
-    // TOOL 1: CUACA SEKARANG
+    // TOOL: CUACA SEKARANG
     // =========================================================
 
     @Tool(description = """
@@ -105,7 +92,7 @@ public class WeatherTool {
     }
 
     // =========================================================
-    // TOOL 2: CUACA SATU HARI (KEMARIN / HARI INI / BESOK / LUSA)
+    // TOOL: CUACA SATU HARI (KEMARIN / HARI INI / BESOK / LUSA)
     // =========================================================
 
     @Tool(description = """
@@ -124,7 +111,7 @@ public class WeatherTool {
     }
 
     // =========================================================
-    // TOOL 3: CUACA RENTANG HARI (MINGGU LALU, 3 HARI KE DEPAN)
+    // TOOL: CUACA RENTANG HARI (MINGGU LALU, 3 HARI KE DEPAN)
     // =========================================================
 
     @Tool(description = """
@@ -146,7 +133,7 @@ public class WeatherTool {
     }
 
     // =========================================================
-    // TOOL 4: CUACA PER JAM
+    // TOOL: CUACA PER JAM
     // =========================================================
 
     @Tool(description = """
@@ -200,10 +187,6 @@ public class WeatherTool {
         }
     }
 
-    // =========================================================
-    // LOGIKA HARIAN (dipakai tool 2 dan 3)
-    // =========================================================
-
     private String daily(String lokasi, int from, int to) {
         try {
             validateLocation(lokasi);
@@ -237,7 +220,6 @@ public class WeatherTool {
         }
     }
 
-    /** Mengambil satu "forecastday" dari history (masa lalu) atau forecast (hari ini/depan). */
     private JsonNode loadDay(String lokasi, LocalDate date, int offset, JsonNode forecastRoot) {
         if (offset < 0) {
             JsonNode root = fetch("/history.json", lokasi, date.toString(), null);
@@ -353,7 +335,6 @@ public class WeatherTool {
     // HELPER
     // =========================================================
 
-    /** Tanggal lokal lokasi dari respons current.json. */
     private LocalDate localToday(JsonNode currentRoot) {
         String localtime = currentRoot.path("location").path("localtime").asText("");
         if (localtime.isBlank()) {
@@ -379,7 +360,6 @@ public class WeatherTool {
         return out;
     }
 
-    /** Menyalin field dari API hanya jika ada, agar tidak ada angka 0 palsu. */
     private void copy(ObjectNode dst, String dstName, JsonNode src, String srcName) {
         JsonNode value = src.path(srcName);
         if (!value.isMissingNode() && !value.isNull()) {
