@@ -1,5 +1,14 @@
 # 9Router CLI (Spring Shell AI)
 
+```text
+ █████╗ ██████╗  ██████╗ ██╗   ██╗████████╗███████╗██████╗      ██████╗██╗  ██╗ █████╗ ████████╗
+██╔══██╗██╔══██╗██╔═══██╗██║   ██║╚══██╔══╝██╔════╝██╔══██╗    ██╔════╝██║  ██║██╔══██╗╚══██╔══╝
+╚██████║██████╔╝██║   ██║██║   ██║   ██║   █████╗  ██████╔╝    ██║     ███████║███████║   ██║  
+ ╚═══██║██╔══██╗██║   ██║██║   ██║   ██║   ██╔══╝  ██╔══██╗    ██║     ██╔══██║██╔══██║   ██║  
+ █████╔╝██║  ██║╚██████╔╝╚██████╔╝   ██║   ███████╗██║  ██║    ╚██████╗██║  ██║██║  ██║   ██║  
+ ╚════╝ ╚═╝  ╚═╝ ╚═════╝  ╚═════╝    ╚═╝   ╚══════╝╚═╝  ╚═╝     ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝  
+```
+
 Aplikasi CLI interaktif berbasis Spring Shell untuk berinteraksi langsung dengan model AI (kompatibel dengan OpenAI API, 9Router, Ollama, vLLM, dll.) langsung dari terminal. 
 
 Aplikasi ini dirancang bukan sekadar sebagai antarmuka chat biasa, melainkan dilengkapi arsitektur pengelolaan konteks berlapis: mulai dari penyimpanan riwayat relasional di PostgreSQL, kompresi konteks otomatis (*background compaction*), pencarian semantik percakapan lampau menggunakan Vector Database (*pgvector* + model embedding *bge-m3*), hingga integrasi pemanggilan fungsi (*Tool Calling*) secara realtime via Spring AI.

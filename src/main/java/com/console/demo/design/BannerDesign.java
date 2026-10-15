@@ -1,63 +1,91 @@
 package com.console.demo.design;
 
+import org.jline.terminal.Terminal;
+
 public final class BannerDesign {
+
     private static final String RESET = "\u001B[0m";
     private static final String BOLD = "\u001B[1m";
+    private static final String GOLD = rgb(255, 190, 0);
+    private static final int MIN_PANEL = 40;
+
     private static final String LOGO = """
-             ███  ████   ███  █   █ █████ █████ ████      ███  █   █  ███  █████  \s
-            █ ░░█ █░░░█ █ ░░█ █░  █░ ░█░░░█░░░░░█░░░█    █ ░░░ █░  █░█ ░░█  ░█░░░ \s
-             ████░████░░█░ ░█░█░░ █░░ █░░░████░░████░░   █░ ░░░█████░█████░  █░░░░\s
-              ░░█░█░░█░ █░░ █░█░░ █░░ █░░ █░░░░ █░░█░ ░  █░░   █░░░█░█░░░█░░ █░░  \s
-             ███░░█░░░█░ ███ ░░███ ░░ █░░ █████░█░░░█░    ███  █░░░█░█░░░█░░ █░░  \s
-              ░░░ ░░░  ░  ░░░ ░ ░░░ ░  ░░  ░░░░░ ░░  ░     ░░░  ░░  ░░░░  ░░  ░░  \s
-               ░░░  ░   ░  ░░░   ░░░    ░   ░░░░░ ░   ░     ░░░  ░   ░ ░   ░   ░  \s""";
+             █████╗ ██████╗  ██████╗ ██╗   ██╗████████╗███████╗██████╗      ██████╗██╗  ██╗ █████╗ ████████╗
+            ██╔══██╗██╔══██╗██╔═══██╗██║   ██║╚══██╔══╝██╔════╝██╔══██╗    ██╔════╝██║  ██║██╔══██╗╚══██╔══╝
+            ╚██████║██████╔╝██║   ██║██║   ██║   ██║   █████╗  ██████╔╝    ██║     ███████║███████║   ██║  \s
+             ╚═══██║██╔══██╗██║   ██║██║   ██║   ██║   ██╔══╝  ██╔══██╗    ██║     ██╔══██║██╔══██║   ██║  \s
+             █████╔╝██║  ██║╚██████╔╝╚██████╔╝   ██║   ███████╗██║  ██║    ╚██████╗██║  ██║██║  ██║   ██║  \s
+             ╚════╝ ╚═╝  ╚═╝ ╚═════╝  ╚═════╝    ╚═╝   ╚══════╝╚═╝  ╚═╝     ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝  \s
+            """;
+
+    private static final int LOGO_WIDTH = LOGO.lines().mapToInt(String::length).max().orElse(0);
+
     private BannerDesign() {}
 
-    public static void print(String title, String... infoLines) {
-        if (System.console() == null) {
-            // output diarahkan ke file/pipe: jangan cetak kode warna
+    public static String row(String label, String value) {
+        return String.format("%-7s: %s", label, value);
+    }
+
+    public static void print(Terminal terminal, String title, String... infoLines) {
+        if (Terminal.TYPE_DUMB.equals(terminal.getType())) {
             System.out.println(title);
+            for (String line : infoLines) System.out.println(line);
             return;
         }
-        printLogo();
+
+        System.out.print("\u001B[2J\u001B[H");
+        System.out.flush();
+
+        int width = terminal.getWidth() > 0 ? terminal.getWidth() : 80;
+
+        if (width >= LOGO_WIDTH) {
+            printLogo();
+        } else {
+            System.out.println(GOLD + BOLD + title + RESET);
+        }
+
         System.out.println();
-        printPanel(title, infoLines);
+        printPanel(title, infoLines, width);
         System.out.println();
     }
 
-    // Logo dengan gradasi emas -> oranye, per baris
     private static void printLogo() {
-        String[] lines = LOGO.split("\n");
-        for (int i = 0; i < lines.length; i++) {
-            double t = lines.length == 1 ? 0 : (double) i / (lines.length - 1);
+        var lines = LOGO.lines().toList();
+
+        for (int i = 0; i < lines.size(); i++) {
+            double t = lines.size() == 1 ? 0 : (double) i / (lines.size() - 1);
             int r = (int) (255 + (200 - 255) * t);
             int g = (int) (215 + (130 - 215) * t);
-            int b = (int) (0 + (40 - 0) * t);
-            System.out.println(rgb(r, g, b) + lines[i] + RESET);
+            int b = (int) (40 * t);
+            System.out.println(rgb(r, g, b) + lines.get(i) + RESET);
         }
     }
 
-    // Kotak dengan judul di garis atas
-    private static void printPanel(String title, String[] infoLines) {
-        int width = 70;
-        String gold = rgb(255, 190, 0);
-        String head = " " + title + " ";
-        int left = (width - head.length()) / 2;
-        int right = width - head.length() - left;
+    private static void printPanel(String title, String[] infoLines, int termWidth) {
+        int longest = 0;
+        for (String line : infoLines) longest = Math.max(longest, line.length());
 
-        System.out.println(gold + "┌" + "─".repeat(left) + BOLD + head + RESET + gold
+        int inner = Math.max(MIN_PANEL, Math.max(longest + 2, title.length() + 6));
+        inner = Math.min(inner, termWidth - 2);
+
+        String head = " " + title + " ";
+        int left = Math.max(0, (inner - head.length()) / 2);
+        int right = Math.max(0, inner - head.length() - left);
+
+        System.out.println(GOLD + "┌" + "─".repeat(left) + BOLD + head + RESET + GOLD
                 + "─".repeat(right) + "┐" + RESET);
 
         for (String line : infoLines) {
             String content = " " + line;
-            if (content.length() > width) {
-                content = content.substring(0, width);
+            if (content.length() > inner) {
+                content = content.substring(0, inner - 1) + "…";
             }
-            String padded = String.format("%-" + width + "s", content);
-            System.out.println(gold + "│" + RESET + padded + gold + "│" + RESET);
+            System.out.println(GOLD + "│" + RESET
+                    + String.format("%-" + inner + "s", content)
+                    + GOLD + "│" + RESET);
         }
 
-        System.out.println(gold + "└" + "─".repeat(width) + "┘" + RESET);
+        System.out.println(GOLD + "└" + "─".repeat(inner) + "┘" + RESET);
     }
 
     private static String rgb(int r, int g, int b) {

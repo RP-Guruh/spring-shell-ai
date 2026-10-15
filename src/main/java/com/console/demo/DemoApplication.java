@@ -5,6 +5,7 @@ import com.console.demo.commands.ai.ListModelsCommand;
 import com.console.demo.commands.ai.StatusRunningCommand;
 import com.console.demo.commands.ai.SettingCommand;
 import com.console.demo.design.BannerDesign;
+import org.jline.reader.LineReader;
 import org.springframework.boot.Banner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
@@ -29,9 +30,14 @@ public class DemoApplication {
 		ConfigurableApplicationContext context = app.run(args);
 
 		if (args.length == 0) {
-			BannerDesign.print("9ROUTER CHAT v0.0.1 @PinkKey",
-					"Router : " + context.getEnvironment().getProperty("spring.ai.openai.base-url"),
-					"Date :" + LocalDate.now(),
+			LineReader lineReader = context.getBean(LineReader.class);
+			String baseUrl = context.getEnvironment()
+					.getProperty("spring.ai.openai.base-url", "-");
+
+			BannerDesign.print(lineReader.getTerminal(),
+					"9ROUTER CHAT v0.0.1 @PinkKey",
+					BannerDesign.row("Router", baseUrl),
+					BannerDesign.row("Date", LocalDate.now().toString()),
 					"Ketik 'help' untuk daftar command");
 		}
 
