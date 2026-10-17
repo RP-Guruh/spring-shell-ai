@@ -1,7 +1,7 @@
 spring.application.name=demo
 
 # AI Provider / OpenAI-compatible API (9Router / vLLM / OpenAI)
-spring.ai.openai.api-key=your-api-key-here
+spring.ai.openai.api-key=sk-4e904f84b51f9768-bkdhlm-2bcf0df3
 spring.ai.openai.base-url=http://localhost:20128/v1
 spring.ai.openai.chat.model=your-chat-model
 spring.ai.openai.chat.options.stream-usage=true

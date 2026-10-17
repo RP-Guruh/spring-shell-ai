@@ -3,6 +3,13 @@ package com.console.demo.tools.agent;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Service;
 
+import org.springframework.ai.content.Media;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.util.MimeType;
+import org.springframework.util.MimeTypeUtils;
+import org.springframework.util.StringUtils;
+
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -12,48 +19,86 @@ import java.util.function.BiPredicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 @Service
 public class ManipulateFile {
 
-    // @path.txt atau @"path dengan spasi", harus diawali spasi/awal baris (email tidak ikut)
     private static final Pattern MENTION = Pattern.compile("(?<!\\S)@(?:\"([^\"]+)\"|(\\S+))");
     private static final long MAX_READ = 100_000;
 
     private final Set<Path> granted = ConcurrentHashMap.newKeySet();
 
-    // default: tolak semua, jadi kalau lupa dipasang tidak ada aksi yang lolos
     private volatile BiPredicate<String, String> approver = (action, detail) -> false;
+
+    private static final Map<String, MimeType> IMAGE_TYPES = Map.of(
+        "jpg",  MimeTypeUtils.IMAGE_JPEG,
+        "jpeg", MimeTypeUtils.IMAGE_JPEG,
+        "png",  MimeTypeUtils.IMAGE_PNG,
+        "gif",  MimeTypeUtils.IMAGE_GIF,
+        "webp", MimeType.valueOf("image/webp")
+    );
+
+    static MimeType imageMime(Path p) {
+        String ext = StringUtils.getFilenameExtension(p.getFileName().toString());
+        return ext == null ? null : IMAGE_TYPES.get(ext.toLowerCase());
+    }
 
     public void setApprover(BiPredicate<String, String> approver) {
         this.approver = approver;
     }
 
-    /** Panggil di chat loop sebelum prompt dikirim ke model. */
+    private Path resolveMention(Matcher m) {
+        String raw = m.group(1) != null ? m.group(1) : m.group(2);
+        Path p = toPath(raw);
+        if (!Files.exists(p)) {
+            p = toPath(raw.replaceAll("[,.;:!?)]+$", ""));
+        }
+        return Files.exists(p) ? p : null;
+    }
+
     public String expandMentions(String prompt) {
         Matcher m = MENTION.matcher(prompt);
         StringBuilder attach = new StringBuilder();
 
         while (m.find()) {
             String raw = m.group(1) != null ? m.group(1) : m.group(2);
-            Path p = toPath(raw);
+            Path p = resolveMention(m);
 
-            // buang tanda baca di ujung, misal "@a.txt," atau "@a.txt?"
-            if (!Files.exists(p)) {
-                p = toPath(raw.replaceAll("[,.;:!?)]+$", ""));
-            }
-            if (!Files.exists(p)) {
+            if (p == null) {
                 attach.append("\n[@").append(raw).append(" tidak ditemukan]\n");
                 continue;
             }
 
             granted.add(p);
             System.out.println("  + dilampirkan: " + p);
-            attach.append("\n<file path=\"").append(p).append("\">\n")
-                    .append(Files.isDirectory(p) ? list(p) : readSafe(p))
-                    .append("\n</file>\n");
+
+            if (imageMime(p) != null) {
+                attach.append("\n[gambar terlampir: ").append(p.getFileName()).append("]\n");
+            } else {
+                attach.append("\n<file path=\"").append(p).append("\">\n")
+                        .append(Files.isDirectory(p) ? list(p) : readSafe(p))
+                        .append("\n</file>\n");
+            }
         }
         return attach.isEmpty() ? prompt : prompt + "\n" + attach;
+    }
+
+    public List<Media> extractImages(String input) {
+        List<Media> result = new ArrayList<>();
+        Matcher m = MENTION.matcher(input);
+        while (m.find()) {
+            try {
+                Path p = resolveMention(m);
+                MimeType mime = p == null ? null : imageMime(p);
+                if (mime != null && Files.isRegularFile(p)) {
+                    result.add(new Media(mime, new FileSystemResource(p)));
+                }
+            } catch (Exception ignored) {}
+        }
+        return result;
     }
 
     @Tool(description = """
@@ -77,6 +122,11 @@ public class ManipulateFile {
     String readFile(String path) {
         try {
             Path p = toPath(path);
+            if (imageMime(p) != null) {
+                return "File ini gambar, tidak bisa dibaca sebagai teks. "
+                     + "Jika user menyebutnya dengan @, gambar sudah terlampir di pesan. "
+                     + "Jika belum, minta user menulis @" + path + " di pesannya.";
+            }
             if (!allowed(p, "BACA FILE")) return "User menolak.";
             return readSafe(p);
         } catch (Exception e) {
@@ -144,7 +194,6 @@ public class ManipulateFile {
 
     // --- helper ---
 
-    // public static supaya MentionCompleter memakai aturan path yang sama (~, relatif, absolut)
     public static Path toPath(String raw) {
         String s = raw.trim();
         if (s.equals("~") || s.startsWith("~/")) {
@@ -153,7 +202,6 @@ public class ManipulateFile {
         return Path.of(s).toAbsolutePath().normalize();
     }
 
-    // sudah di-@ (atau berada di dalam folder yang di-@) -> langsung boleh, selain itu tanya user
     private boolean allowed(Path p, String action) {
         for (Path g : granted) {
             if (p.startsWith(g)) return true;

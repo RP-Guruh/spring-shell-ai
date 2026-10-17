@@ -30,7 +30,7 @@ public class SummaryEntity {
     private Integer countMessage;
 
     @JdbcTypeCode(SqlTypes.VECTOR)
-    @Array(length = 1024)
+    @Array(length = 768)
     @Column(name = "vector")
     private float[] vector;
 

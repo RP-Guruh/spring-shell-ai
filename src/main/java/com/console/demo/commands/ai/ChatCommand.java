@@ -32,7 +32,7 @@ import org.springframework.shell.jline.tui.component.SingleItemSelector;
 import org.springframework.shell.jline.tui.component.support.SelectorItem;
 import org.springframework.shell.jline.tui.style.TemplateExecutor;
 import org.springframework.stereotype.Component;
-
+import org.springframework.ai.content.Media;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -237,6 +237,7 @@ public class ChatCommand {
                 new MarkdownRenderer(() -> lineReader.getTerminal().getWidth());
 
         String expanded = manipulateFile.expandMentions(input);
+        List<Media> images = manipulateFile.extractImages(input);
 
         AtomicReference<ThinkingSpinner> spinner = new AtomicReference<>(newSpinner());
 
@@ -277,11 +278,19 @@ public class ChatCommand {
             String systemPrompt = buildSystemPrompt();
             List<Message> prompt = withContext(history, input);
 
-            if (!expanded.equals(input)) {
+            // if (!expanded.equals(input)) {
+            //     prompt = new ArrayList<>(prompt);
+            //     prompt.set(prompt.size() - 1, new UserMessage(expanded));
+            // }
+            if (!expanded.equals(input) || !images.isEmpty()) {
                 prompt = new ArrayList<>(prompt);
-                prompt.set(prompt.size() - 1, new UserMessage(expanded));
+                prompt.set(prompt.size() - 1,
+                        UserMessage.builder()
+                                .text(expanded)
+                                .media(images)
+                                .build());
             }
-            extraTokens += estimate(systemPrompt) + estimate(expanded) - estimate(input);
+            extraTokens += estimate(systemPrompt) + estimate(expanded) - estimate(input) + images.size() * 1000;
 
             chatClient.prompt()
                     .system(systemPrompt)

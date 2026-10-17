@@ -32,7 +32,7 @@ public class MessageEntity {
     private Integer totalToken;
 
     @JdbcTypeCode(SqlTypes.VECTOR)
-    @Array(length = 1024)
+    @Array(length = 768)
     @Column(name = "vector")
     private float[] vector;
 

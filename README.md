@@ -18,7 +18,8 @@ Aplikasi ini dirancang bukan sekadar sebagai antarmuka chat biasa, melainkan dil
 ## Fitur Utama
 
 - **Terminal Chat Interaktif & Streaming**: Tampilan respons teks mengalir (*streaming/SSE*) dengan indikator *thinking spinner* dan *markdown renderer*.
-- **File Mention & Autocomplete (`@`)**: Kemampuan menyertakan file atau direktori ke dalam konteks obrolan menggunakan `@path` dengan auto-completion tombol Tab (via JLine `MentionCompleter`).
+- **File & Image Mention (`@`) dengan Autocomplete**: Kemampuan menyertakan file teks, direktori, maupun **gambar** (JPG, JPEG, PNG, GIF, WebP) ke dalam obrolan menggunakan `@path` dengan auto-completion tombol Tab (via JLine `MentionCompleter`).
+- **Analisis Gambar & Multimodal Vision**: Model yang mendukung kapabilitas vision dapat langsung menganalisis gambar yang dilampirkan via `@gambar.png` (otomatis dikonversi menjadi Spring AI `Media` / multimodal message).
 - **Tool Calling Dinamis & Human-in-the-Loop**: Model AI dapat memanggil tool Java secara mandiri untuk data cuaca riil (`WeatherTool`) dan manipulasi berkas (`ManipulateFile`). Setiap operasi perubahan file (buat, edit, hapus) mewajibkan konfirmasi interaktif dari pengguna di terminal menggunakan TUI component (`SingleItemSelector`).
 - **Manajemen Konteks & Auto-Compaction**: Memantau konsumsi token secara otomatis; saat obrolan melebihi batas, pesan lama diringkas di latar belakang (*background task*) tanpa menginterupsi jalannya chat.
 - **Semantic Long-Term Memory (pgvector)**: Menyimpan embedding pasangan tanya-jawab dan ringkasan ke dalam database vektor PostgreSQL berdimensi 1024 (*bge-m3* via Ollama). Memungkinkan RAG (*Retrieval-Augmented Generation*) untuk memanggil kembali memori lampau yang relevan.
@@ -134,7 +135,7 @@ java -jar target/demo-0.0.1-SNAPSHOT.jar
 
 Ketika sesi percakapan sedang aktif:
 
-- `@<path>` : Melampirkan file atau isi folder langsung ke prompt (contoh: `@pom.xml`, `@src/main`, atau `@"folder dengan spasi"`). Tekan tombol **Tab** untuk auto-completion direktori dan nama file.
+- `@<path>` : Melampirkan file teks, isi folder, atau **gambar** langsung ke prompt (contoh: `@pom.xml`, `@src/main`, `@screenshot.png`, atau `@"folder dengan spasi/foto.jpg"`). Tekan tombol **Tab** untuk auto-completion direktori dan nama file.
 - `/search <kata kunci>` : Melakukan pencarian semantik berbasis vektor terhadap arsip obrolan lampau dan menampilkan skor kemiripan (*similarity score*).
 - `/clear` : Mereset *context window* obrolan di sesi aktif saat ini.
 - `/exit` : Menutup sesi chat dan kembali ke shell utama.
@@ -358,24 +359,44 @@ Mengemas endpoint WeatherAPI menjadi fungsi teranotasi `@Tool`:
 
 ---
 
-### 3. Tool File System & Mention (`ManipulateFile`)
+### 3. Tool File System, Mention (`ManipulateFile`), & Analisis Gambar Multimodal
 
-`ManipulateFile` memungkinkan model membaca, membuat, menyunting, dan menghapus berkas di sistem file lokal, dilengkapi mekanisme persetujuan pengguna (*Human-in-the-Loop*).
+`ManipulateFile` memungkinkan model membaca, membuat, menyunting, dan menghapus berkas di sistem file lokal, serta menangani lampiran file teks maupun gambar secara otomatis.
 
 #### A. Fitur Mention `@` & Auto-Completion Tab (`MentionCompleter`)
-- **Sintaks**: Mendukung format `@path/file.txt`, `@"nama folder/file dengan spasi"`, atau `@~/folder` (mengarah ke home direktori pengguna).
+- **Sintaks**: Mendukung format `@path/file.txt`, `@gambar.png`, `@"nama folder/file dengan spasi"`, atau `@~/folder` (mengarah ke home direktori pengguna).
 - **Auto-Completion**: Didukung oleh implementasi JLine `MentionCompleter`, pengguna cukup mengetik `@` lalu menekan tombol **Tab** untuk melihat saran berkas dan subdirektori.
-- **Ekspansi Otomatis ke Prompt**: Sebelum prompt dikirim ke model, isi file atau daftar isi folder yang di-`@` otomatis diekstraksi dan disuntikkan ke dalam tag `<file path="...">...</file>`.
+- **Ekspansi Otomatis ke Prompt**:
+  - **File Teks & Folder**: Isi berkas atau daftar isi folder diekstraksi dan disuntikkan ke dalam tag `<file path="...">...</file>`.
+  - **Berkas Gambar**: Ditandai dengan `[gambar terlampir: nama_file]`, lalu diekstrak secara terpisah sebagai objek `Media` (multimodal Spring AI).
 - **Akses Langsung (Granted)**: Berkas yang sudah di-`@` secara eksplisit oleh pengguna otomatis diberi izin baca tanpa perlu konfirmasi berulang.
 
-#### B. Daftar Fungsi di `ManipulateFile`
+#### B. Analisis Gambar & Multimodal Vision
+Aplikasi mendukung analisis visual/gambar secara native jika model AI yang digunakan memiliki kapabilitas vision (cek kolom `VISION` pada perintah `models`):
+- **Format Didukung**: `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`.
+- **Mekanisme Multimodal**: Saat pengguna menyebut berkas gambar dengan `@foto.png`, sistem mendeteksi MIME type (`image/png`, `image/jpeg`, dll.) dan membungkusnya ke dalam Spring AI `org.springframework.ai.model.Media` (`FileSystemResource`).
+- **Pesan Multimodal**: Objek `UserMessage` dibangun dengan menyertakan teks prompt beserta daftar `Media` gambar:
+  ```java
+  UserMessage.builder()
+          .text(expandedPrompt)
+          .media(images)
+          .build();
+  ```
+- **Estimasi Token Gambar**: Setiap gambar yang dilampirkan otomatis dialokasikan estimasi token (~1.000 token per gambar) untuk menjaga keakuratan pelacakan konteks token.
+- **Contoh Penggunaan**:
+  ```text
+  you ❯ jelaskan diagram arsitektur ini @docs/architecture.png
+  you ❯ apa error yang ada di screenshot ini @"~/Pictures/error log.jpg"
+  ```
+
+#### C. Daftar Fungsi di `ManipulateFile`
 1. **`listFiles(dir)`**: Menampilkan daftar file dan subfolder di direktori yang dituju.
-2. **`readFile(path)`**: Membaca isi berkas teks. Jika file berada di luar daftar yang di-`@`, sistem akan meminta konfirmasi user terlebih dahulu.
+2. **`readFile(path)`**: Membaca isi berkas teks. Jika berkas berupa gambar, tool mengembalikan informasi bahwa file merupakan gambar dan sudah terlampir via mention. Jika file berada di luar daftar yang di-`@`, sistem akan meminta konfirmasi user terlebih dahulu.
 3. **`createFile(path, content)`**: Membuat file baru beserta folder induknya. Operasi gagal jika file sudah ada (mengarahkan model memakai `editFile`). Mewajibkan persetujuan user.
 4. **`editFile(path, oldText, newText)`**: Mengedit berkas dengan mengganti cuplikan teks yang unik (`oldText` harus muncul tepat satu kali). Menampilkan cuplikan diff `oldText` vs `newText` sebelum meminta persetujuan user.
 5. **`deleteFile(path)`**: Menghapus satu berkas reguler (bukan direktori). Menampilkan path dan ukuran berkas sebelum meminta persetujuan user.
 
-#### C. Mekanisme Keamanan (Human-in-the-Loop & Guardrails)
+#### D. Mekanisme Keamanan (Human-in-the-Loop & Guardrails)
 - **Konfirmasi Interaktif Terminal (SingleItemSelector TUI)**: Setiap operasi mutasi berkas (`createFile`, `editFile`, `deleteFile`, atau `readFile` di luar berkas yang di-mention) memicu `approver` callback (`BiPredicate<String, String>`). Spinner berhenti sementara, terminal menampilkan detail aksi/diff, lalu memunculkan komponen interaktif TUI (`SingleItemSelector` dari Spring Shell):
   ```text
   [PERSETUJUAN] EDIT FILE /path/to/demo/application.properties
@@ -401,7 +422,8 @@ Berikut ringkasan siklus hidup sebuah pesan di dalam aplikasi:
 [1. Input User Diterima]
           │
           ├── Parsing Mention (@path / @"path spasi")
-          │         ├─ File ditemukan: sisipkan isi ke dalam <file path="...">
+          │         ├─ File Teks/Folder: sisipkan isi ke dalam <file path="...">
+          │         ├─ Gambar (.png, .jpg, .webp, dll): bungkus ke Media Spring AI (Vision)
           │         └─ File tidak ada: beri penanda file tidak ditemukan
           │
           ├── Evaluasi RAG: jika ada konteks masa lalu relevan ──► Suntikkan via searchPast
